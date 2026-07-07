@@ -1,0 +1,25 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.vinsenzo83/baton",
+  "description": "Cross-model AI session relay & handoff over MCP — pass a whole working context between Claude, GPT, Gemini sessions; live rooms; spider verification (static + observed E2E).",
+  "version": "0.1.0",
+  "repository": {
+    "url": "https://github.com/vinsenzo83/baton",
+    "source": "github"
+  },
+  "packages": [
+    {
+      "registryType": "npm",
+      "registryBaseUrl": "https://registry.npmjs.org",
+      "identifier": "baton-mcp",
+      "version": "0.1.0",
+      "transport": { "type": "stdio" }
+    }
+  ],
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://baton-mcp-production.up.railway.app/mcp"
+    }
+  ]
+}

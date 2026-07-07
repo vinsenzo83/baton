@@ -22,5 +22,17 @@
   },
   "bin": {
     "baton-watch": "bin/baton-watch.mjs"
+  },
+  "mcpName": "io.github.vinsenzo83/baton",
+  "files": [
+    "src",
+    "bin",
+    "server.json",
+    "README.md",
+    "USAGE.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vinsenzo83/baton.git"
   }
 }
