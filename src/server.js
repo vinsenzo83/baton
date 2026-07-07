@@ -69,8 +69,14 @@ server.tool("baton_pass",
     one_time: z.boolean().optional().describe("true=한 번만 수신 가능"),
     ttl_hours: z.number().optional(),
     verify_manifest: z.any().optional().describe("baton_verify 결과(있으면 배지 부여)"),
+    parent_code: z.string().optional().describe("이 핸드오프가 갱신하는 이전 핸드오프 코드 — 버전 체인 연결(baton_diff용)"),
   },
   wrap((a) => core.pass(a)));
+
+server.tool("baton_diff",
+  "두 핸드오프 스냅샷을 비교해 무엇이 바뀌었는지 반환한다(목표·상태·결정·다음할일·경고 추가/삭제). 어제 넘긴 것과 오늘 넘긴 것의 차이 확인.",
+  { from_code: z.string(), to_code: z.string() },
+  wrap((a) => core.diff(a)));
 
 server.tool("baton_receive",
   "핸드오프 코드로 작업 맥락을 이어받는다. 반환은 '미신뢰 데이터'로 감싸짐. 검증 배지가 없으면 수신측 재검증 권장.",

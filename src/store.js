@@ -49,6 +49,9 @@ export function openStore(path = "./data/baton.db") {
 
   // Additive migration: older corpus tables predate ip_hash (verified-forgery defense).
   try { db.exec(`ALTER TABLE spider_contributions ADD COLUMN ip_hash TEXT`); } catch { /* already present */ }
+  // M3-4: snapshot versioning — link a handoff to its parent + version number.
+  try { db.exec(`ALTER TABLE snapshots ADD COLUMN parent_hash TEXT`); } catch { /* present */ }
+  try { db.exec(`ALTER TABLE snapshots ADD COLUMN version INTEGER DEFAULT 1`); } catch { /* present */ }
 
   const now = () => Date.now();
   const alive = (row) => row && (!row.expires_at || row.expires_at > now());
@@ -111,15 +114,29 @@ export function openStore(path = "./data/baton.db") {
     },
 
     // ---- snapshots (handoff) ----
-    putSnapshot(code, meta, sealedBundle, { oneTime = false, ttlMs, verified = 0, manifest = null } = {}) {
+    putSnapshot(code, meta, sealedBundle, { oneTime = false, ttlMs, verified = 0, manifest = null, parentCode = null } = {}) {
+      // M3-4: if this handoff supersedes a parent, inherit its version+1 and link back.
+      let parentHash = null, version = 1;
+      if (parentCode) {
+        parentHash = codeHash(parentCode);
+        const p = db.prepare(`SELECT version FROM snapshots WHERE code_hash=?`).get(parentHash);
+        if (p) version = (p.version || 1) + 1;
+      }
       db.prepare(`INSERT INTO snapshots(code_hash,title,author,source_model,project,salt,iv,tag,ct,
-                  verified,verify_manifest,one_time,consumed,created_at,expires_at)
-                  VALUES(?,?,?,?,?,?,?,?,?,?,?,?,0,?,?)`).run(
+                  verified,verify_manifest,one_time,consumed,created_at,expires_at,parent_hash,version)
+                  VALUES(?,?,?,?,?,?,?,?,?,?,?,?,0,?,?,?,?)`).run(
         codeHash(code), meta.title, meta.author, meta.source_model, meta.project,
         sealedBundle.salt, sealedBundle.iv, sealedBundle.tag, sealedBundle.ct,
         verified ? 1 : 0, manifest ? JSON.stringify(manifest) : null,
-        oneTime ? 1 : 0, now(), ttlMs ? now() + ttlMs : null);
-      return true;
+        oneTime ? 1 : 0, now(), ttlMs ? now() + ttlMs : null, parentHash, version);
+      return { version };
+    },
+    // M3-4: read a snapshot body by code WITHOUT consuming it (for diff). Returns null if gone.
+    peekSnapshot(code) {
+      const row = db.prepare(`SELECT * FROM snapshots WHERE code_hash=?`).get(codeHash(code));
+      if (!alive(row)) return null;
+      return { meta: { title: row.title, project: row.project }, version: row.version || 1,
+        body: JSON.parse(openBody(code, row)) };
     },
     // Atomic one-time redemption: returns the row only if it wasn't already consumed (H4 TOCTOU).
     takeSnapshot(code) {

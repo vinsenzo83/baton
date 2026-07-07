@@ -115,7 +115,7 @@ export function makeCore(store) {
     // ---------- HANDOFF ----------
     // The client model fills `snapshot` in the BATON Snapshot v1 shape. We scrub secrets,
     // seal under a fresh code, and (optionally) attach a verification manifest.
-    pass({ snapshot, one_time = false, ttl_hours = 72, verify_manifest = null } = {}) {
+    pass({ snapshot, one_time = false, ttl_hours = 72, verify_manifest = null, parent_code = null } = {}) {
       if (!snapshot || !snapshot.context) throw new Error("snapshot.context is required (BATON Snapshot v1).");
       const raw = JSON.stringify(snapshot);
       const { text: clean, redactions } = scrubSecrets(raw);
@@ -140,11 +140,12 @@ export function makeCore(store) {
         manifest = re.manifest;
         verified = re.verdict === "verified" ? 1 : 0;
       }
-      store.putSnapshot(code, meta, sealed, {
+      const { version } = store.putSnapshot(code, meta, sealed, {
         oneTime: one_time, ttlMs: ttl_hours * HOUR, verified, manifest,
+        parentCode: parent_code ? normalizeCode(parent_code) : null,
       });
       return {
-        code, one_time, expires_in_hours: ttl_hours, secrets_redacted: redactions,
+        code, one_time, expires_in_hours: ttl_hours, secrets_redacted: redactions, version,
         verified: !!verified,
         badge: verified ? "🕸️ VERIFIED (includes observed E2E evidence)" : "⚪ UNVERIFIED (baton_verify not run, or static-only)",
         share: `The receiver picks it up with baton_receive: ${code}`,
@@ -163,6 +164,28 @@ export function makeCore(store) {
         badge, meta: snap.meta, verify_manifest: snap.manifest,
         context_fenced: fenceUntrusted("handoff snapshot", body),
         next: "Run baton_verify to re-check on the receiving side (receiver-side verification is the real trust point).",
+      };
+    },
+
+    // M3-4: diff two handoff snapshots — what changed between versions (decisions, next steps, state).
+    diff({ from_code, to_code } = {}) {
+      const a = store.peekSnapshot(normalizeCode(from_code));
+      const b = store.peekSnapshot(normalizeCode(to_code));
+      if (!a) throw new Error("from_code snapshot not found or expired.");
+      if (!b) throw new Error("to_code snapshot not found or expired.");
+      const listDiff = (x = [], y = [], key) => {
+        const norm = (v) => key ? v?.[key] : v;
+        const xs = x.map(norm), ys = y.map(norm);
+        return { added: ys.filter((v) => !xs.includes(v)), removed: xs.filter((v) => !ys.includes(v)) };
+      };
+      const ca = a.body.context || {}, cb = b.body.context || {};
+      return {
+        from: { title: a.meta.title, version: a.version }, to: { title: b.meta.title, version: b.version },
+        goal_changed: ca.goal !== cb.goal ? { from: ca.goal, to: cb.goal } : null,
+        state_changed: ca.current_state !== cb.current_state ? { from: ca.current_state, to: cb.current_state } : null,
+        decisions: listDiff(ca.decisions, cb.decisions, "what"),
+        next_steps: listDiff(a.body.next_steps, b.body.next_steps, null),
+        warnings: listDiff(a.body.warnings, b.body.warnings, null),
       };
     },
 

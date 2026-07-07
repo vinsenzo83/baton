@@ -108,4 +108,21 @@ let pass = 0; const ok = (n) => { console.log("  ✓", n); pass++; };
   ok("verified manifest → 🕸️ badge survives handoff");
 }
 
-console.log(`\n🕸️  BATON: ${pass}/8 groups passed\n`);
+// 9. snapshot versioning + diff (M3-4)
+{
+  const v1 = core.pass({ snapshot: { meta: { title: "auth", project: "p" }, context: {
+    goal: "add login", current_state: "wireframe", decisions: [{ what: "use OAuth", why: "fast" }] },
+    next_steps: ["design db", "build form"] } });
+  assert.equal(v1.version, 1);
+  const v2 = core.pass({ parent_code: v1.code, snapshot: { meta: { title: "auth", project: "p" }, context: {
+    goal: "add login + SSO", current_state: "db done", decisions: [{ what: "use OAuth", why: "fast" }, { what: "add SAML", why: "enterprise" }] },
+    next_steps: ["build form"] } });
+  assert.equal(v2.version, 2);
+  const d = core.diff({ from_code: v1.code, to_code: v2.code });
+  assert.ok(d.goal_changed && d.goal_changed.to === "add login + SSO");
+  assert.deepEqual(d.decisions.added, ["add SAML"]);
+  assert.deepEqual(d.next_steps.removed, ["design db"]);   // completed step dropped
+  ok("snapshot versioning (v1→v2) + diff shows goal/decision/step changes");
+}
+
+console.log(`\n🕸️  BATON: ${pass}/9 groups passed\n`);
