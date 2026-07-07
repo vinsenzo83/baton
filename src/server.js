@@ -117,6 +117,22 @@ if (process.env.BATON_HTTP === "1") {
   app.post("/api/who",    api((b) => core.who(b)));
   app.post("/api/send",   api((b) => core.send(b)));
   app.post("/api/inbox",  api((b) => core.inboxRaw(b)));
+
+  // ── Shared spider corpus (M2-2), same shape spider_* tools speak (/v1/patterns) ──
+  const { preparePattern } = await import("./corpus-scrub.js");
+  const SALT = process.env.SPIDER_SALT || "baton-default-salt";
+  app.post("/v1/patterns", (req, res) => {
+    const token = (req.headers.authorization || "").replace(/^Bearer\s+/i, "").trim() || "anon";
+    const prep = preparePattern(req.body || {}, { contributorToken: token, projectId: (req.body || {}).projectId, salt: SALT });
+    if (!prep.ok) return res.status(422).json({ error: "rejected by scrub", reason: prep.reason });
+    const r = store.upsertPattern(prep.record);
+    res.json({ stored: true, action: r.action, hit_count: r.hit_count, contributor_count: r.contributor_count, verified: r.verified, fingerprint: prep.record.fingerprint });
+  });
+  app.get("/v1/patterns", (req, res) => {
+    const tags = (req.query.tags || "").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+    const patterns = store.queryPatterns({ tags, klass: req.query.class, limit: Number(req.query.limit || 50) });
+    res.json({ count: patterns.length, patterns });
+  });
   // Stateless: a fresh server+transport per POST (SDK's stateless pattern).
   app.post("/mcp", async (req, res) => {
     const server = buildServer();

@@ -33,6 +33,18 @@ export function openStore(path = "./data/baton.db") {
     );
     CREATE INDEX IF NOT EXISTS idx_msg_room ON messages(room_hash, seq);
     CREATE INDEX IF NOT EXISTS idx_mem_room ON members(room_hash);
+
+    -- shared spider corpus (M2-2). Only scrubbed, generalized techniques — never code/secrets.
+    CREATE TABLE IF NOT EXISTS spider_patterns (
+      fingerprint TEXT PRIMARY KEY, klass TEXT, name TEXT, signal TEXT, fix TEXT,
+      tags TEXT, severity TEXT DEFAULT 'yellow', tier TEXT DEFAULT 'mid',
+      hit_count INTEGER DEFAULT 1, contributor_count INTEGER DEFAULT 1,
+      verified INTEGER DEFAULT 0, created_at INTEGER, updated_at INTEGER
+    );
+    CREATE TABLE IF NOT EXISTS spider_contributions (
+      fingerprint TEXT, contributor_hash TEXT, created_at INTEGER,
+      UNIQUE(fingerprint, contributor_hash)
+    );
   `);
 
   const now = () => Date.now();
@@ -123,6 +135,42 @@ export function openStore(path = "./data/baton.db") {
       const a = db.prepare(`DELETE FROM snapshots WHERE code_hash=?`).run(h).changes;
       const b = db.prepare(`DELETE FROM rooms WHERE code_hash=?`).run(h).changes;
       return a + b > 0;
+    },
+
+    // ---- shared spider corpus (M2-2) ----
+    // Upsert by fingerprint; accumulate hits + distinct contributors; promote to verified at threshold.
+    upsertPattern(rec, verifyThreshold = 3) {
+      const tx = db.transaction(() => {
+        const existing = db.prepare(`SELECT * FROM spider_patterns WHERE fingerprint=?`).get(rec.fingerprint);
+        let action;
+        if (!existing) {
+          db.prepare(`INSERT INTO spider_patterns(fingerprint,klass,name,signal,fix,tags,severity,tier,hit_count,contributor_count,verified,created_at,updated_at)
+                      VALUES(?,?,?,?,?,?,?,?,1,1,0,?,?)`).run(
+            rec.fingerprint, rec.klass, rec.name, rec.signal, rec.fix, JSON.stringify(rec.tags || []),
+            rec.severity, rec.tier, now(), now());
+          action = "created";
+        } else {
+          db.prepare(`UPDATE spider_patterns SET hit_count=hit_count+1, updated_at=? WHERE fingerprint=?`).run(now(), rec.fingerprint);
+          action = "merged";
+        }
+        // distinct-contributor accounting → verified promotion
+        const isNew = db.prepare(`INSERT OR IGNORE INTO spider_contributions(fingerprint,contributor_hash,created_at) VALUES(?,?,?)`)
+          .run(rec.fingerprint, rec.contributor_hash, now()).changes > 0;
+        if (isNew && existing) db.prepare(`UPDATE spider_patterns SET contributor_count=contributor_count+1 WHERE fingerprint=?`).run(rec.fingerprint);
+        const cc = db.prepare(`SELECT contributor_count FROM spider_patterns WHERE fingerprint=?`).get(rec.fingerprint).contributor_count;
+        if (cc >= verifyThreshold) db.prepare(`UPDATE spider_patterns SET verified=1 WHERE fingerprint=?`).run(rec.fingerprint);
+        const row = db.prepare(`SELECT hit_count,contributor_count,verified FROM spider_patterns WHERE fingerprint=?`).get(rec.fingerprint);
+        return { action, ...row, verified: !!row.verified };
+      });
+      return tx();
+    },
+    queryPatterns({ tags = [], klass, limit = 50 } = {}) {
+      let rows = db.prepare(`SELECT klass,name,signal,fix,tags,severity,tier,hit_count,contributor_count,verified
+                             FROM spider_patterns ORDER BY verified DESC, hit_count DESC LIMIT ?`).all(Math.min(limit, 200));
+      rows = rows.map((r) => ({ ...r, verified: !!r.verified, tags: JSON.parse(r.tags || "[]") }));
+      if (klass) rows = rows.filter((r) => r.klass === klass || r.klass.includes(klass));
+      if (tags.length) rows = rows.filter((r) => r.tags.some((t) => tags.includes(t.toLowerCase())));
+      return rows;
     },
     _db: db,
   };
