@@ -143,7 +143,10 @@ function applyLang() {
 }
 function toggleLang() { LANG = LANG === "en" ? "ko" : "en"; localStorage.setItem("baton_lang", LANG); applyLang(); }
 
-const api = (path, body) => fetch("/api" + path, {
+// When served via a proxy domain (e.g. eduverse-ai.app/baton) call the API on the origin
+// server directly (CORS-enabled). When served from the baton host itself, use same-origin.
+const API_BASE = /baton-mcp-production\.up\.railway\.app$/.test(location.hostname) ? "" : "https://baton-mcp-production.up.railway.app";
+const api = (path, body) => fetch(API_BASE + "/api" + path, {
   method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
 }).then(async (r) => { const j = await r.json(); if (!r.ok || j.error) throw new Error(j.error || T().reqFail); return j; });
 

@@ -107,6 +107,15 @@ if (process.env.BATON_HTTP === "1") {
   // H2: trust exactly the Railway edge proxy (1 hop). NOT `true` — that would let a caller
   // forge X-Forwarded-For and fake IP diversity for the verified-badge check.
   app.set("trust proxy", 1);
+  // CORS: let the dashboard, served from a friendly domain (eduverse-ai.app/baton), call the
+  // REST API directly. No credentials/cookies are used, so a permissive origin is safe here.
+  app.use((req, res, next) => {
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Methods", "POST, GET, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "content-type, authorization");
+    if (req.method === "OPTIONS") return res.sendStatus(204);
+    next();
+  });
   app.use(express.json({ limit: "256kb" }));  // tighter cap — DoS surface
   app.get("/health", (_q, r) => r.json({ ok: true, name: "baton", version: "0.1.0" }));
   // Rate limits: writes are cheap to abuse, so cap them per-IP. Reads a bit looser.

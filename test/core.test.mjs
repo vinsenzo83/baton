@@ -37,8 +37,8 @@ let pass = 0; const ok = (n) => { console.log("  ✓", n); pass++; };
 {
   const { code } = core.createRoom({});
   core.join({ code, alias: "dev", model: "x" });
-  assert.throws(() => core.join({ code, alias: "dev" }), /사용 중/);
-  assert.throws(() => core.join({ code, alias: "spider" }), /예약/);
+  assert.throws(() => core.join({ code, alias: "dev" }), /taken/);
+  assert.throws(() => core.join({ code, alias: "spider" }), /reserved/);
   ok("duplicate + reserved aliases rejected");
 }
 
@@ -72,7 +72,7 @@ let pass = 0; const ok = (n) => { console.log("  ✓", n); pass++; };
   const r = core.pass({ one_time: true, snapshot: { context: { goal: "one shot" } } });
   const first = core.receive({ code: r.code });
   assert.ok(first.meta);
-  assert.throws(() => core.receive({ code: r.code }), /소비/);
+  assert.throws(() => core.receive({ code: r.code }), /consumed/);
   ok("one-time handoff consumed exactly once");
 }
 
