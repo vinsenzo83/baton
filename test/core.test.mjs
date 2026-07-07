@@ -202,4 +202,31 @@ core.setPlan({ api_key: "tkey", plan: "pro" });   // unlimited key for handoff t
   ok("seats: Free room caps at 2 sessions; Team lifts it; short signup key rejected");
 }
 
-console.log(`\n🕸️  BATON: ${pass}/14 groups passed\n`);
+// 15. verified handoff via SIGNED RECEIPT (the differentiator) + forgery rejected
+{
+  // independent verifier issues a signed receipt with observed E2E
+  const receipt = core.verify({
+    target: "checkout/payment", capsule: "BTN-H-XYZ",
+    environment: { os: "ubuntu-24.04", node: "24.2" },
+    static_checks: [{ dim: "integration", passed: true, evidence: "adapter wired" }],
+    e2e_evidence: [{ claim: "payment succeeds", observed: true, detail: "POST /pay 200 + order row +1" }],
+    artifacts: ["playwright.trace.zip", "network.har"],
+  });
+  assert.equal(receipt.kind, "baton.verification-receipt/v1");
+  assert.equal(receipt.verdict, "verified");
+  assert.ok(receipt.signature && receipt.signature.length === 64);
+  // attach to a handoff → badge survives, receipt surfaced on receive
+  const r = core.pass({ api_key: "tkey", snapshot: { context: { goal: "signed handoff" } }, receipt });
+  assert.equal(r.verified, true);
+  const got = core.receive({ code: r.code });
+  assert.match(got.badge, /signed receipt by/);
+  assert.equal(got.receipt.verdict, "verified");
+  // FORGERY: flip verdict to "verified" without re-signing → must be rejected (badge NOT granted)
+  const forged = { ...core.verify({ target: "x", static_checks: [{ dim: "d", passed: true, evidence: "e" }] }) };
+  forged.verdict = "verified";   // tamper: static-only → claim verified, signature now stale
+  const r2 = core.pass({ api_key: "tkey", snapshot: { context: { goal: "forged" } }, receipt: forged });
+  assert.equal(r2.verified, false);   // forged receipt earns no badge
+  ok("signed receipt: independent verify → 🕸️ badge; tampered/forged receipt rejected");
+}
+
+console.log(`\n🕸️  BATON: ${pass}/15 groups passed\n`);

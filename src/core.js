@@ -7,7 +7,7 @@
 import { roomCode, handoffCode, normalizeCode } from "./ids.js";
 import { fenceUntrusted, injectionFlags, scrubSecrets } from "./prompt-guard.js";
 import { sealBody } from "./crypto.js";
-import { gateVerdict } from "./verify.js";
+import { gateVerdict, issueReceipt, verifyReceipt } from "./verify.js";
 import { planOf, monthKey, anonMonthly, isBillingOn } from "./plans.js";
 import { codeHash } from "./crypto.js";
 import { participantId } from "./ids.js";
@@ -227,7 +227,7 @@ export function makeCore(store) {
     // ---------- HANDOFF ----------
     // The client model fills `snapshot` in the BATON Snapshot v1 shape. We scrub secrets,
     // seal under a fresh code, and (optionally) attach a verification manifest.
-    pass({ snapshot, one_time = false, ttl_hours = 72, verify_manifest = null, parent_code = null, api_key = null } = {}) {
+    pass({ snapshot, one_time = false, ttl_hours = 72, verify_manifest = null, receipt = null, parent_code = null, api_key = null } = {}) {
       if (!snapshot || !snapshot.context) throw new Error("snapshot.context is required (BATON Snapshot v1).");
       // M3-3: enforce the monthly snapshot quota (Free = 20/mo). Pro/Team are unlimited.
       const a = acct(api_key);
@@ -255,10 +255,15 @@ export function makeCore(store) {
       };
       // seal the (scrubbed) body under the code — server stores ciphertext only
       const sealed = sealBody(code, clean);
-      // H1 fix: NEVER trust a client-supplied verdict. Recompute from the evidence server-side.
-      // A manifest with verdict:"verified" but no observed E2E is downgraded to static-only.
+      // Trust comes from a SERVER-SIGNED receipt (the differentiator): a signed receipt whose
+      // verdict is "verified" is trusted because only the server could have signed it.
       let manifest = null, verified = 0;
-      if (verify_manifest && (verify_manifest.static_checks?.length || verify_manifest.e2e_evidence?.length)) {
+      if (receipt) {
+        const chk = verifyReceipt(receipt);
+        if (chk.valid) { manifest = receipt; verified = receipt.verdict === "verified" ? 1 : 0; }
+        // invalid signature → treated as unverified (forged receipts never earn the badge)
+      } else if (verify_manifest && (verify_manifest.static_checks?.length || verify_manifest.e2e_evidence?.length)) {
+        // Legacy path: recompute server-side from raw evidence (H1). Never trust a raw verdict.
         const re = gateVerdict({
           verifier: "server-recompute", target: meta.title,
           static_checks: verify_manifest.static_checks || [],
@@ -286,14 +291,32 @@ export function makeCore(store) {
       const snap = store.takeSnapshot(code);
       if (!snap) throw new Error("Handoff code is invalid, expired, or already consumed (one-time).");
       const body = JSON.parse(snap.body);
+      const m = snap.manifest;
+      const isReceipt = m && m.kind === "baton.verification-receipt/v1";
+      const obs = isReceipt ? (m.observed || []).filter((o) => o.observed).length : 0;
       const badge = snap.verified
-        ? `🕸️ VERIFIED — passed ${snap.manifest?.method || "e2e"} evidence check`
-        : "⚪ UNVERIFIED — re-verify this snapshot's claims on the receiving side (baton_verify).";
+        ? (isReceipt
+            ? `🕸️ VERIFIED — signed receipt by ${m.verifier}, ${obs} observed check(s)`
+            : `🕸️ VERIFIED — passed ${m?.method || "e2e"} evidence check`)
+        : "⚪ UNVERIFIED — verify on YOUR side (baton_verify) before trusting this work.";
       return {
-        badge, meta: snap.meta, verify_manifest: snap.manifest,
+        badge, meta: snap.meta,
+        receipt: isReceipt ? m : undefined,               // signed, inspectable trust record
+        verify_manifest: isReceipt ? undefined : m,
         context_fenced: fenceUntrusted("handoff snapshot", body),
-        next: "Run baton_verify to re-check on the receiving side (receiver-side verification is the real trust point).",
+        next: "Independent verification (baton_verify on YOUR machine) is the real trust point — receipts are server-signed so they can't be forged.",
       };
+    },
+
+    // ---------- VERIFICATION RECEIPT (the differentiator) ----------
+    // An INDEPENDENT verifier (not the producer) replays the work and gets a server-SIGNED
+    // receipt. Attach it to baton_pass so the receiver trusts observed evidence, not a claim.
+    verify({ target, capsule, environment, static_checks, e2e_evidence, artifacts } = {}) {
+      return issueReceipt({
+        verifier: "receiver-spider", target, capsule, environment,
+        static_checks: static_checks || [], e2e_evidence: e2e_evidence || [],
+        artifacts: artifacts || [], issued_at: Date.now(),
+      });
     },
 
     // M3-4: diff two handoff snapshots — what changed between versions (decisions, next steps, state).

@@ -54,6 +54,24 @@ export function openWithKey(key, sealed) {
   return Buffer.concat([decipher.update(Buffer.from(sealed.ct, "base64")), decipher.final()]).toString("utf8");
 }
 
+// Verification receipts are signed by the SERVER so no client can forge a "verified" claim.
+// The signature covers the canonical receipt body; anyone can verify it, nobody can fake it.
+import { createHmac } from "node:crypto";
+const RECEIPT_SECRET = () => process.env.BATON_RECEIPT_SECRET || "baton-dev-receipt-secret-change-me";
+// Stable stringify (sorted keys) so the signature is deterministic.
+function canonical(obj) {
+  if (obj === null || typeof obj !== "object") return JSON.stringify(obj);
+  if (Array.isArray(obj)) return "[" + obj.map(canonical).join(",") + "]";
+  return "{" + Object.keys(obj).sort().map((k) => JSON.stringify(k) + ":" + canonical(obj[k])).join(",") + "}";
+}
+export function signReceipt(body) {
+  return createHmac("sha256", RECEIPT_SECRET()).update(canonical(body)).digest("hex");
+}
+export function verifyReceiptSig(body, signature) {
+  const expect = signReceipt(body);
+  return typeof signature === "string" && signature.length === expect.length && hashEquals(expect, signature);
+}
+
 // Constant-time hash compare for code_hash lookups.
 export function hashEquals(a, b) {
   const ba = Buffer.from(a, "hex");

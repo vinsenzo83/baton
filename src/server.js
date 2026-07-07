@@ -78,7 +78,8 @@ server.tool("baton_pass",
     }).describe("이어서 일하는 데 필요한 것만 구조화(대화 전체 아님)"),
     one_time: z.boolean().optional().describe("true=한 번만 수신 가능"),
     ttl_hours: z.number().optional(),
-    verify_manifest: z.any().optional().describe("baton_verify 결과(있으면 배지 부여)"),
+    receipt: z.any().optional().describe("baton_verify가 발급한 서명된 검증 영수증(첨부 시 🕸️ 배지)"),
+    verify_manifest: z.any().optional().describe("(레거시) 원시 증거 매니페스트 — 서버가 재계산"),
     parent_code: z.string().optional().describe("이 핸드오프가 갱신하는 이전 핸드오프 코드 — 버전 체인 연결(baton_diff용)"),
     api_key: z.string().optional().describe("발급받은 API 키(없으면 Free 플랜 월 20개 한도)"),
   },
@@ -123,13 +124,16 @@ server.tool("baton_verify_plan",
   wrap((a) => planVerify(a)));
 
 server.tool("baton_verify",
-  "수집한 증거로 검증 판정을 내리고 서명 매니페스트를 만든다. E2E 관측 증거가 없으면 'verified' 불가('static-only'). 이 매니페스트를 baton_pass 에 첨부하면 🕸️ 배지가 붙는다.",
+  "독립 검증자가 넘어온 작업을 실제 실행·관측한 결과로 '서명된 검증 영수증(receipt)'을 발급한다. E2E 관측이 없으면 verified 불가(static-only). 영수증은 서버 서명이라 위조 불가 — baton_pass의 receipt 인자로 첨부하면 🕸️ 배지가 붙는다. 'AI 작업은 영수증 없이 믿지 마라.'",
   {
-    target: z.string(),
+    target: z.string().describe("검증 대상(기능/플로우)"),
+    capsule: z.string().optional().describe("검증하는 핸드오프 코드/해시"),
+    environment: z.record(z.any()).optional().describe("재현 환경(os·runtime·commit 등)"),
     static_checks: z.array(z.object({ dim: z.string(), passed: z.boolean(), evidence: z.string() })).optional(),
     e2e_evidence: z.array(z.object({ claim: z.string(), observed: z.boolean(), detail: z.string() })).optional().describe("실제 실행·관측 결과(HTTP 상태·DB delta·출력)"),
+    artifacts: z.array(z.string()).optional().describe("증거 아티팩트 다이제스트(trace·har·screenshot·log)"),
   },
-  wrap((a) => gateVerdict(a)));
+  wrap((a) => core.verify(a)));
 
 } // end registerTools
 

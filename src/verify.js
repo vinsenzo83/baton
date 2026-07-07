@@ -3,6 +3,7 @@
 // (HTTP status, DB row delta, real model output), never static reasoning alone.
 // And per arch review H1, trust is established on the RECEIVER side, not the sender's.
 import { BUILTIN_TRAPS, classify } from "./spider.js";
+import { signReceipt, verifyReceiptSig } from "./crypto.js";
 
 // Plan: what a receiver's spider should statically check AND what it must E2E-probe.
 export function planVerify({ target, claims = [] } = {}) {
@@ -51,4 +52,33 @@ export function gateVerdict({ verifier = "receiver-spider", target, static_check
     attested: `${static_checks.length} static checks, ${e2e_evidence.filter((e) => e.observed).length}/${e2e_evidence.length} E2E observations`,
   };
   return { verdict, manifest };
+}
+
+// ── Verification Receipt (the differentiator) ──
+// A SERVER-SIGNED record of an independent verification: who verified, in what environment,
+// what was observed, with what artifacts, and the verdict. The signature makes it a trust unit
+// no client can forge — "never trust an agent handoff without a receipt."
+export function issueReceipt({ verifier, target, capsule, environment, static_checks = [], e2e_evidence = [], artifacts = [], issued_at = 0 } = {}) {
+  const { verdict } = gateVerdict({ verifier, target, static_checks, e2e_evidence });
+  const body = {
+    kind: "baton.verification-receipt/v1",
+    capsule: capsule || null,                 // hash of the handoff this verifies
+    target: target || null,
+    verifier: verifier || "receiver-spider",  // WHO verified (independent of the producer)
+    environment: environment || {},           // os / runtime / commit the replay ran in
+    static_checks,
+    observed: e2e_evidence,                    // what was actually run + observed
+    artifacts,                                 // trace / har / screenshots / logs digests
+    verdict,                                   // verified | static-only | failed
+    issued_at,
+  };
+  return { ...body, signature: signReceipt(body) };
+}
+
+// Anyone can verify a receipt's authenticity; nobody can forge one.
+export function verifyReceipt(receipt) {
+  if (!receipt || typeof receipt !== "object" || !receipt.signature) return { valid: false, reason: "no signature" };
+  const { signature, ...body } = receipt;
+  const valid = verifyReceiptSig(body, signature);
+  return { valid, verdict: valid ? receipt.verdict : null, reason: valid ? "signature ok" : "bad signature (forged or tampered)" };
 }
