@@ -57,7 +57,13 @@ export function openWithKey(key, sealed) {
 // Verification receipts are signed by the SERVER so no client can forge a "verified" claim.
 // The signature covers the canonical receipt body; anyone can verify it, nobody can fake it.
 import { createHmac } from "node:crypto";
-const RECEIPT_SECRET = () => process.env.BATON_RECEIPT_SECRET || "baton-dev-receipt-secret-change-me";
+const DEV_RECEIPT_SECRET = "baton-dev-receipt-secret-change-me";
+// H1 fail-closed: in production (HTTP server), refuse to run on the public dev secret — otherwise
+// a missing env would silently downgrade to a world-known signing key (anyone could forge receipts).
+if (process.env.BATON_HTTP === "1" && (!process.env.BATON_RECEIPT_SECRET || process.env.BATON_RECEIPT_SECRET === DEV_RECEIPT_SECRET)) {
+  throw new Error("BATON_RECEIPT_SECRET must be set to a strong, non-default value in production (HTTP mode).");
+}
+const RECEIPT_SECRET = () => process.env.BATON_RECEIPT_SECRET || DEV_RECEIPT_SECRET;
 // Stable stringify (sorted keys) so the signature is deterministic.
 function canonical(obj) {
   if (obj === null || typeof obj !== "object") return JSON.stringify(obj);

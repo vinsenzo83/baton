@@ -57,17 +57,15 @@ export function gateVerdict({ verifier = "receiver-spider", target, static_check
   const manifest = {
     verifier, target, method: e2eObserved ? "static+e2e" : "static",
     static_checks, e2e_evidence, verdict, reason,
-    badge: badgeFor(verdict, verifier),
+    // legacy manifest badge: does NOT assert independence (that's decided at consumption by identity)
+    badge: verdict === "verified" ? "🕸️ VERIFIED" : verdict === "failed" ? "🔴 FAILED" : "⚪ STATIC-ONLY",
     attested: `${static_checks.length} static checks, ${e2e_evidence.filter((e) => e.observed).length}/${e2e_evidence.length} E2E observations`,
   };
   return { verdict, reason, manifest };
 }
 
-// Badge TIER: independent verification (verifier ≠ producer) earns the full 🕸️ VERIFIED.
-// A producer self-attesting earns only 🔏 SEALED — signed and tamper-proof, but grade it lower;
-// the real trust point is an independent replay on the receiver's side.
-export function badgeFor(verdict, verifier) {
-  const independent = verifier && verifier !== "self-attested";
+// Badge from verdict + whether the verifier is INDEPENDENT of the producer (identity-based).
+export function badgeFor(verdict, independent) {
   if (verdict === "verified") return independent ? "🕸️ VERIFIED" : "🔏 SEALED (self-attested — receiver should re-verify)";
   if (verdict === "failed") return "🔴 FAILED";
   return "⚪ STATIC-ONLY (no observed evidence — claims not trusted)";
@@ -77,22 +75,26 @@ export function badgeFor(verdict, verifier) {
 // A SERVER-SIGNED record of an independent verification: who verified, in what environment,
 // what was observed, with what artifacts, and the verdict. The signature makes it a trust unit
 // no client can forge — "never trust an agent handoff without a receipt."
-export function issueReceipt({ verifier, target, capsule, environment, static_checks = [], e2e_evidence = [], artifacts = [], issued_at = 0 } = {}) {
+// The receipt records WHO verified as an identity (verifier_key_hash = codeHash(api_key)),
+// NOT a free string — so nobody can type a fake "independent auditor" name (C1). The tier
+// (independent vs self-attested) is NOT stored here: it can only be decided at consumption
+// time by comparing the verifier's identity to the PRODUCER's. So issueReceipt signs the
+// facts (verdict, evidence, verifier identity); pass/receive compute the trust tier.
+export function issueReceipt({ verifier, verifier_key_hash = null, target, capsule, environment, static_checks = [], e2e_evidence = [], artifacts = [], issued_at = 0 } = {}) {
   const v = verifier || "receiver-spider";
   const { verdict, reason } = gateVerdict({ verifier: v, target, static_checks, e2e_evidence });
   const body = {
     kind: "baton.verification-receipt/v1",
     capsule: capsule || null,                 // hash of the handoff this verifies
     target: target || null,
-    verifier: v,                              // WHO verified (independent of the producer)
-    tier: v === "self-attested" ? "self-attested" : "independent",
+    verifier: v,                              // display label (untrusted — identity is the hash)
+    verifier_key_hash,                        // WHO verified, bound to a registered account (or null)
     environment: environment || {},           // os / runtime / commit the replay ran in
     static_checks,
     observed: e2e_evidence,                    // what was actually run + observed
     artifacts,                                 // trace / har / screenshots / logs digests
     verdict,                                   // verified | static-only | failed
     reason,                                    // WHY this verdict (transparency)
-    badge: badgeFor(verdict, v),
     issued_at,
   };
   return { ...body, signature: signReceipt(body) };
@@ -104,4 +106,11 @@ export function verifyReceipt(receipt) {
   const { signature, ...body } = receipt;
   const valid = verifyReceiptSig(body, signature);
   return { valid, verdict: valid ? receipt.verdict : null, reason: valid ? "signature ok" : "bad signature (forged or tampered)" };
+}
+
+// Decide the trust tier by comparing identities — the ONLY sound basis for "independent".
+// independent 🕸️ requires: the verifier is a REGISTERED account AND is not the producer.
+// Anonymous verification, or the producer verifying their own work, is at most 🔏 SEALED.
+export function tierOf(verifierKeyHash, producerKeyHash) {
+  return verifierKeyHash && verifierKeyHash !== producerKeyHash ? "independent" : "self-attested";
 }

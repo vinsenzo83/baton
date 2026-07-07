@@ -7,7 +7,7 @@
 import { roomCode, handoffCode, normalizeCode } from "./ids.js";
 import { fenceUntrusted, injectionFlags, scrubSecrets } from "./prompt-guard.js";
 import { sealBody } from "./crypto.js";
-import { gateVerdict, issueReceipt, verifyReceipt } from "./verify.js";
+import { gateVerdict, issueReceipt, verifyReceipt, tierOf, badgeFor } from "./verify.js";
 import { planOf, monthKey, anonMonthly, isBillingOn } from "./plans.js";
 import { codeHash } from "./crypto.js";
 import { participantId } from "./ids.js";
@@ -258,18 +258,27 @@ export function makeCore(store) {
       // Trust comes from a SERVER-SIGNED receipt (the differentiator): a signed receipt whose
       // verdict is "verified" is trusted because only the server could have signed it.
       let manifest = null, verified = 0;
-      // Convenience (dogfood UX fix): pass evidence inline and we mint+sign the receipt right
-      // here (capsule = this handoff), so "seal with proof" is one step, not verify-then-pass.
+      const producerHash = a.keyHash || null;
+      // Convenience (dogfood UX): pass evidence inline → mint+sign the receipt here. This is the
+      // PRODUCER verifying their own work, so it is ALWAYS self-attested — the verifier identity
+      // is forced to the producer's, so it can never masquerade as independent (C1 fix).
       if (!receipt && verify && (verify.static_checks?.length || verify.e2e_evidence?.length)) {
         receipt = issueReceipt({
-          verifier: verify.verifier || "self-attested", target: meta.title, capsule: code,
+          verifier: verify.verifier || "self-attested", verifier_key_hash: producerHash,
+          target: meta.title, capsule: code,
           environment: verify.environment, static_checks: verify.static_checks || [],
           e2e_evidence: verify.e2e_evidence || [], artifacts: verify.artifacts || [], issued_at: Date.now(),
         });
       }
       if (receipt) {
         const chk = verifyReceipt(receipt);
-        if (chk.valid) { manifest = receipt; verified = receipt.verdict === "verified" ? 1 : 0; }
+        if (chk.valid) {
+          verified = receipt.verdict === "verified" ? 1 : 0;
+          // TIER decided by IDENTITY here, not by any client-supplied string (C1 fix):
+          const tier = tierOf(receipt.verifier_key_hash, producerHash);
+          const independent = tier === "independent";
+          manifest = { ...receipt, tier, badge: badgeFor(receipt.verdict, independent) };
+        }
         // invalid signature → treated as unverified (forged receipts never earn the badge)
       } else if (verify_manifest && (verify_manifest.static_checks?.length || verify_manifest.e2e_evidence?.length)) {
         // Legacy path: recompute server-side from raw evidence (H1). Never trust a raw verdict.
@@ -278,7 +287,8 @@ export function makeCore(store) {
           static_checks: verify_manifest.static_checks || [],
           e2e_evidence: verify_manifest.e2e_evidence || [],
         });
-        manifest = re.manifest;
+        // Legacy raw evidence from the producer → self-attested (never independent).
+        manifest = { ...re.manifest, tier: "self-attested", badge: badgeFor(re.verdict, false) };
         verified = re.verdict === "verified" ? 1 : 0;
       }
       const { version } = store.putSnapshot(code, meta, sealed, {
@@ -323,11 +333,9 @@ export function makeCore(store) {
       const m = snap.manifest;
       const isReceipt = m && m.kind === "baton.verification-receipt/v1";
       const obs = isReceipt ? (m.observed || []).filter((o) => o.observed).length : 0;
-      const badge = isReceipt
-        ? `${m.badge} — by ${m.verifier} (${m.tier}), ${obs}/${(m.observed || []).length} observed`
-        : (snap.verified
-            ? `🕸️ VERIFIED — passed ${m?.method || "e2e"} evidence check`
-            : "⚪ UNVERIFIED — verify on YOUR side (baton_verify) before trusting this work.");
+      const badge = m && m.badge
+        ? (isReceipt ? `${m.badge} — by ${m.verifier} (${m.tier}), ${obs}/${(m.observed || []).length} observed` : m.badge)
+        : "⚪ UNVERIFIED — verify on YOUR side (baton_verify) before trusting this work.";
       return {
         badge, meta: snap.meta,
         receipt: isReceipt ? m : undefined,               // signed, inspectable trust record
@@ -343,11 +351,13 @@ export function makeCore(store) {
     // ---------- VERIFICATION RECEIPT (the differentiator) ----------
     // An INDEPENDENT verifier (not the producer) replays the work and gets a server-SIGNED
     // receipt. Attach it to baton_pass so the receiver trusts observed evidence, not a claim.
-    verify({ target, capsule, environment, static_checks, e2e_evidence, artifacts, verifier } = {}) {
+    verify({ target, capsule, environment, static_checks, e2e_evidence, artifacts, verifier, api_key } = {}) {
+      // Bind the verifier to a registered identity. "independent" is decided later by comparing
+      // this hash to the producer's — a free-string verifier name can NOT earn 🕸️ (C1 fix).
+      const a = acct(api_key);
       return issueReceipt({
-        // WHO verified — ideally the domain expert (e.g. "TM-expert-15yr"), since only someone
-        // who knows the field can judge whether the AI's output is actually right.
-        verifier: verifier || "receiver-spider", target, capsule, environment,
+        verifier: verifier || "receiver-spider", verifier_key_hash: a.keyHash || null,
+        target, capsule, environment,
         static_checks: static_checks || [], e2e_evidence: e2e_evidence || [],
         artifacts: artifacts || [], issued_at: Date.now(),
       });
@@ -359,24 +369,29 @@ export function makeCore(store) {
     // see at a glance what's independently verified vs only self-attested vs unverified.
     consolidate({ codes = [] } = {}) {
       if (!Array.isArray(codes) || codes.length === 0) throw new Error("codes[] is required (the handoff codes to consolidate).");
-      const departments = codes.map((c) => {
-        const code = normalizeCode(c);
-        const snap = store.peekSnapshot(code);
-        if (!snap) return { code, error: "invalid, expired, or consumed (one-time)" };
-        const m = snap.manifest;
-        const isReceipt = m && m.kind === "baton.verification-receipt/v1";
-        const ctx = snap.body?.context || {};
-        return {
-          code, title: snap.meta?.title || "untitled", author: snap.meta?.author || "unknown",
-          model: snap.meta?.source_model || null,
-          goal: ctx.goal || null, current_state: ctx.current_state || null,
-          next_steps: snap.body?.next_steps || [],
-          verified: !!snap.verified,
-          tier: isReceipt ? m.tier : (snap.verified ? "legacy" : null),
-          verifier: isReceipt ? m.verifier : null,
-          badge: isReceipt ? m.badge : (snap.verified ? "🕸️ VERIFIED" : "⚪ UNVERIFIED"),
-          reason: isReceipt ? m.reason : null,
-        };
+      // C2 DoS fix: each code costs a scrypt (decrypt). Cap the count and DEDUPE so repeating one
+      // code can't amplify CPU. 50 is plenty for a human decision board.
+      if (codes.length > 50) throw new Error("Too many codes (max 50 per board).");
+      const uniq = [...new Set(codes.map((c) => normalizeCode(c)))];
+      const departments = uniq.map((code) => {
+        try {
+          const snap = store.peekSnapshot(code);
+          if (!snap) return { code, error: "invalid, expired, or consumed (one-time)" };
+          const m = snap.manifest;
+          const isReceipt = m && m.kind === "baton.verification-receipt/v1";
+          const ctx = snap.body?.context || {};
+          return {
+            code, title: snap.meta?.title || "untitled", author: snap.meta?.author || "unknown",
+            model: snap.meta?.source_model || null,
+            goal: ctx.goal || null, current_state: ctx.current_state || null,
+            next_steps: snap.body?.next_steps || [],
+            verified: !!snap.verified,
+            tier: m?.tier || (snap.verified ? "self-attested" : null),
+            verifier: isReceipt ? m.verifier : null,
+            badge: m?.badge || (snap.verified ? "🔏 SEALED" : "⚪ UNVERIFIED"),
+            reason: m?.reason || null,
+          };
+        } catch { return { code, error: "unreadable (corrupt or wrong key)" }; }  // Minor: per-item guard
       });
       const ok = departments.filter((d) => !d.error);
       const independent = ok.filter((d) => d.verified && d.tier === "independent").length;

@@ -146,6 +146,7 @@ server.tool("baton_verify",
     static_checks: z.array(z.object({ dim: z.string(), passed: z.boolean(), evidence: z.string() })).optional(),
     e2e_evidence: z.array(z.object({ claim: z.string(), observed: z.boolean(), detail: z.string() })).optional().describe("실제 실행·관측 결과(HTTP 상태·DB delta·출력)"),
     artifacts: z.array(z.string()).optional().describe("증거 아티팩트 다이제스트(trace·har·screenshot·log)"),
+    api_key: z.string().optional().describe("검증자 계정 키 — 독립검증(🕸️)은 생산자와 다른 등록계정일 때만 인정. 없으면 자가증명(🔏). Authorization 헤더로도 자동첨부"),
   },
   wrap((a) => core.verify(a)));
 

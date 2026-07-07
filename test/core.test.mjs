@@ -106,8 +106,8 @@ core.setPlan({ api_key: "tkey", plan: "pro" });   // unlimited key for handoff t
   const r = core.pass({ api_key: "tkey", snapshot: { context: { goal: "verified handoff" } }, verify_manifest: manifest });
   assert.equal(r.verified, true);
   const got = core.receive({ code: r.code });
-  assert.match(got.badge, /VERIFIED/);
-  ok("verified manifest → 🕸️ badge survives handoff");
+  assert.match(got.badge, /🔏 SEALED/);   // legacy raw-evidence path = producer's own → self-attested
+  ok("verified manifest (legacy) → 🔏 SEALED (self-attested, not independent)");
 }
 
 // 9. snapshot versioning + diff (M3-4)
@@ -205,8 +205,9 @@ core.setPlan({ api_key: "tkey", plan: "pro" });   // unlimited key for handoff t
 // 15. verified handoff via SIGNED RECEIPT (the differentiator) + forgery rejected
 {
   // independent verifier issues a signed receipt with observed E2E
+  core.signup({ api_key: "indep-verifier-key-1" });   // independent verifier = a registered account
   const receipt = core.verify({
-    target: "checkout/payment", capsule: "BTN-H-XYZ",
+    target: "checkout/payment", capsule: "BTN-H-XYZ", api_key: "indep-verifier-key-1",  // separate identity
     environment: { os: "ubuntu-24.04", node: "24.2" },
     static_checks: [{ dim: "integration", passed: true, evidence: "adapter wired" }],
     e2e_evidence: [{ claim: "payment succeeds", observed: true, detail: "POST /pay 200 + order row +1" }],
@@ -275,7 +276,8 @@ core.setPlan({ api_key: "tkey", plan: "pro" });   // unlimited key for handoff t
 // 18. consolidate: gather departments' handoffs into one result board with trust tiers
 {
   // dept A: independently verified
-  const recA = core.verify({ target: "TM script", verifier: "TM-expert-15yr",
+  core.signup({ api_key: "tm-expert-key" });
+  const recA = core.verify({ target: "TM script", verifier: "TM-expert-15yr", api_key: "tm-expert-key",
     static_checks: [{ dim: "d", passed: true, evidence: "e" }],
     e2e_evidence: [{ claim: "call flow works", observed: true, detail: "실통화 관측" }] });
   const a = core.pass({ api_key: "tkey", receipt: recA, snapshot: { context: { goal: "TM 상담 스크립트 고도화" }, next_steps: ["A/B 테스트"] } });
@@ -296,4 +298,39 @@ core.setPlan({ api_key: "tkey", plan: "pro" });   // unlimited key for handoff t
   ok("consolidate: dept handoffs → one board w/ trust tiers + who-verified + open steps");
 }
 
-console.log(`\n🕸️  BATON: ${pass}/18 groups passed\n`);
+// 19. C1 fix: a producer CANNOT self-claim independent verification by naming a fake verifier
+{
+  // attack A: inline verify with a fake "independent" verifier name → must stay self-attested
+  const atk = core.pass({ api_key: "producer-key-1",
+    snapshot: { context: { goal: "self-claim attack" } },
+    verify: { verifier: "independent-auditor-jane",
+      static_checks: [{ dim: "d", passed: true, evidence: "e" }],
+      e2e_evidence: [{ claim: "works", observed: true, detail: "200" }] } });
+  assert.equal(atk.tier, "self-attested");                 // NOT independent, despite the name
+  assert.match(core.receive({ code: atk.code }).badge, /🔏 SEALED/);
+
+  // attack B: producer verifies with THEIR OWN key, then attaches → still self-attested
+  const ownRec = core.verify({ target: "x", verifier: "me", api_key: "producer-key-1",
+    static_checks: [{ dim: "d", passed: true, evidence: "e" }], e2e_evidence: [{ claim: "w", observed: true, detail: "200" }] });
+  const b = core.pass({ api_key: "producer-key-1", snapshot: { context: { goal: "own-key" } }, receipt: ownRec });
+  assert.equal(b.tier, "self-attested");                   // same identity → not independent
+
+  // legit: a DIFFERENT registered account verifies → independent
+  core.signup({ api_key: "auditor-key-9" });
+  const indRec = core.verify({ target: "x", verifier: "auditor", api_key: "auditor-key-9",
+    static_checks: [{ dim: "d", passed: true, evidence: "e" }], e2e_evidence: [{ claim: "w", observed: true, detail: "200" }] });
+  const c2 = core.pass({ api_key: "producer-key-1", snapshot: { context: { goal: "cross" } }, receipt: indRec });
+  assert.equal(c2.tier, "independent");
+  ok("C1 fix: fake verifier name & self-key stay 🔏 SEALED; only a different account earns 🕸️");
+}
+
+// 20. C2 fix: consolidate caps code count and dedupes (DoS amplification blocked)
+{
+  assert.throws(() => core.consolidate({ codes: new Array(51).fill("BTN-H-X") }), /max 50/);
+  const one = core.pass({ api_key: "tkey", snapshot: { context: { goal: "dup" } } });
+  const board = core.consolidate({ codes: [one.code, one.code, one.code] });  // repeated
+  assert.equal(board.departments.length, 1);               // deduped → one scrypt, not three
+  ok("C2 fix: consolidate caps at 50 + dedupes repeated codes (no scrypt amplification)");
+}
+
+console.log(`\n🕸️  BATON: ${pass}/20 groups passed\n`);
