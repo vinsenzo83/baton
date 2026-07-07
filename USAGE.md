@@ -129,6 +129,21 @@ The real unlock is **handing work across people** — outsourcer→in-house, lea
 
 *(Relay/rooms — §4 — help when several sessions need to coordinate live before a handoff.)*
 
+### Result board — consolidate departments' work
+
+When several people/departments each hand off their work, `baton_consolidate` (or the web
+board at **/board.html**) gathers them into one view a human judges at a glance:
+
+- Each dept shows its verification tier — **🕸️ VERIFIED** (an independent domain expert checked
+  it), **🔏 SEALED** (the producer attested their own work — cross-verify it), **⚪ UNVERIFIED**.
+- It surfaces **who verified** (the expert's identity), *why* anything was downgraded, and every
+  dept's open next steps.
+- It's a **decision board for a person**, not an auto-approver: "TM is expert-verified → finalize;
+  accounting is self-attested → have another accountant check; marketing → verify first."
+
+This is distributed AX in one screen: each field's expert drives their own AI, they cross-verify
+each other, and the company sees a trustworthy consolidated result — with a human in the loop.
+
 ---
 
 ## 7. Tool reference
@@ -146,7 +161,8 @@ The real unlock is **handing work across people** — outsourcer→in-house, lea
 | `baton_revoke` | code | crypto-shred |
 | `baton_leave` | code, member_id | frees a room seat |
 | `baton_verify_plan` | target, claims? | static dims + required E2E probes |
-| `baton_verify` | target, capsule?, environment?, static_checks?, e2e_evidence?, artifacts? | **signed Verification Receipt** |
+| `baton_verify` | target, verifier?, capsule?, environment?, static_checks?, e2e_evidence?, artifacts? | **signed Verification Receipt** |
+| `baton_consolidate` | codes[] | **result board** — depts' handoffs by trust tier |
 | `baton_signup` | api_key? | free account (gating off now) |
 
 **Snapshot v1 shape:** `{ meta{title,author,source_model,project}, context{goal,current_state,decisions[{what,why}],constraints[]}, artifacts{files,links,commands}, next_steps[], warnings[] }`
