@@ -1,0 +1,7 @@
+# better-sqlite3 is a native module — the build needs Python + a C/C++ toolchain,
+# which the default Nixpacks Node image lacks (build failed without these).
+[phases.setup]
+nixPkgs = ["nodejs_22", "python3", "gcc", "gnumake"]
+
+[start]
+cmd = "BATON_HTTP=1 node src/server.js"
