@@ -186,4 +186,19 @@ core.setPlan({ api_key: "tkey", plan: "pro" });   // unlimited key for handoff t
   ok("funnel: baton_signup → free account (20/mo); anon trial capped at 5");
 }
 
-console.log(`\n🕸️  BATON: ${pass}/13 groups passed\n`);
+// 14. seats: a room caps concurrent sessions by the OWNER's plan (orchestration paywall)
+{
+  const KEY = "seat-owner-key-1234";
+  core.signup({ api_key: KEY });
+  const r = core.createRoom({ api_key: KEY, alias: "boss" });   // session 1 (owner)
+  core.join({ code: r.code, alias: "s2" });                     // session 2
+  assert.throws(() => core.join({ code: r.code, alias: "s3" }), /full/);  // Free = 2 seats
+  core.setPlan({ api_key: KEY, plan: "team" });                 // Team = 10 seats
+  core.join({ code: r.code, alias: "s3" });
+  assert.equal(core.who({ code: r.code }).members.length, 3);
+  // short api_key on signup is rejected (silent-substitution trap fixed)
+  assert.throws(() => core.signup({ api_key: "short" }), /12 characters/);
+  ok("seats: Free room caps at 2 sessions; Team lifts it; short signup key rejected");
+}
+
+console.log(`\n🕸️  BATON: ${pass}/14 groups passed\n`);

@@ -107,6 +107,14 @@ export function openStore(path = "./data/baton.db") {
       if (!alive(r)) return null;
       return { ...r, name: safeOpen(code, r) };
     },
+    memberCount(roomHash) {
+      return db.prepare(`SELECT COUNT(*) AS n FROM members WHERE room_hash=?`).get(roomHash).n;
+    },
+    getAccountPlan(keyHash) {
+      if (!keyHash) return "free";
+      const a = db.prepare(`SELECT plan FROM accounts WHERE key_hash=?`).get(keyHash);
+      return a?.plan || "free";
+    },
     join(code, alias, model) {
       const r = db.prepare(`SELECT * FROM rooms WHERE code_hash=?`).get(codeHash(code));
       if (!alive(r)) return null;

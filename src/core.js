@@ -60,7 +60,13 @@ export function makeCore(store) {
     // Self-serve free account. Creates a personal Free bucket (20/mo). No email/payment.
     // Returns an api_key the user saves and attaches (Authorization: Bearer, or api_key arg).
     signup({ api_key } = {}) {
-      const key = api_key && api_key.length >= 12 ? api_key : ("btn_" + roomCode().replace(/^BTN-R-/, "").replace(/-/g, "").toLowerCase());
+      let key;
+      if (api_key !== undefined && api_key !== null && api_key !== "") {
+        if (String(api_key).length < 12) throw new Error("api_key must be at least 12 characters (or omit it to auto-generate a strong one).");
+        key = String(api_key);
+      } else {
+        key = "btn_" + roomCode().replace(/^BTN-R-/, "").replace(/-/g, "").toLowerCase();
+      }
       store.upsertAccount(codeHash(key), { plan: "free" });
       return {
         api_key: key, plan: "free", handoffs_per_month: planOf("free").limits.snapshotsPerMonth,
@@ -80,7 +86,7 @@ export function makeCore(store) {
         plan: a.plan, org: a.org || undefined,
         limits: { ...a.limits, snapshotsPerMonth: cap === Infinity ? "unlimited" : cap,
           activeRooms: a.limits.activeRooms === Infinity ? "unlimited" : a.limits.activeRooms,
-          seats: a.limits.seats },
+          seats_per_room: a.limits.seatsPerRoom },
         usage: { snapshots_this_month: used, remaining: cap === Infinity ? "unlimited" : Math.max(0, cap - used) },
         upgrade: a.plan === "free" ? "Run baton_upgrade to go Pro ($8/mo, unlimited handoffs) or Team ($25/mo)." : undefined,
       };
@@ -153,6 +159,12 @@ export function makeCore(store) {
       // M1: reserved-name check on the confusable-folded alias (blocks "admin ", " boss", "аdmin")
       if (RESERVED.test(foldConfusable(alias)) || store.aliasTaken(room.code_hash, alias))
         throw new Error(`Alias '${alias}' is reserved or already taken.`);
+      // SEATS: cap concurrent sessions in a room by the room OWNER's plan (Free 2 · Pro 4 · Team 10).
+      // This is the orchestration paywall — how many AIs/people can collaborate at once.
+      const ownerPlan = store.getAccountPlan(room.owner_hash);
+      const seatCap = planOf(ownerPlan).limits.seatsPerRoom;
+      if (store.memberCount(room.code_hash) >= seatCap)
+        throw new Error(`Room is full (${seatCap} seats on ${ownerPlan}). The room owner can baton_upgrade for more concurrent sessions.`);
       const m = store.join(code, alias, model);
       return { member_id: m.id, alias, hint: "Use this member_id for baton_send / baton_inbox." };
     },
