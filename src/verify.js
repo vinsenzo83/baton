@@ -109,8 +109,9 @@ export function verifyReceipt(receipt) {
 }
 
 // Decide the trust tier by comparing identities — the ONLY sound basis for "independent".
-// independent 🕸️ requires: the verifier is a REGISTERED account AND is not the producer.
-// Anonymous verification, or the producer verifying their own work, is at most 🔏 SEALED.
+// independent 🕸️ requires BOTH sides be REGISTERED accounts AND be different. If the producer
+// is anonymous the server can't know who produced it, so it can't assert the verifier is
+// independent of them (you can't be independent of an unknown party) → self-attested.
 export function tierOf(verifierKeyHash, producerKeyHash) {
-  return verifierKeyHash && verifierKeyHash !== producerKeyHash ? "independent" : "self-attested";
+  return verifierKeyHash && producerKeyHash && verifierKeyHash !== producerKeyHash ? "independent" : "self-attested";
 }

@@ -317,11 +317,15 @@ core.setPlan({ api_key: "tkey", plan: "pro" });   // unlimited key for handoff t
 
   // legit: a DIFFERENT registered account verifies → independent
   core.signup({ api_key: "auditor-key-9" });
+  core.signup({ api_key: "producer-key-1" });   // both sides must be registered for independent
   const indRec = core.verify({ target: "x", verifier: "auditor", api_key: "auditor-key-9",
     static_checks: [{ dim: "d", passed: true, evidence: "e" }], e2e_evidence: [{ claim: "w", observed: true, detail: "200" }] });
   const c2 = core.pass({ api_key: "producer-key-1", snapshot: { context: { goal: "cross" } }, receipt: indRec });
   assert.equal(c2.tier, "independent");
-  ok("C1 fix: fake verifier name & self-key stay 🔏 SEALED; only a different account earns 🕸️");
+  // MED fix: anonymous producer can NOT earn independent (can't be independent of an unknown party)
+  const anon = core.pass({ snapshot: { context: { goal: "anon producer" } }, receipt: indRec });
+  assert.equal(anon.tier, "self-attested");
+  ok("C1 fix: fake name/self-key/anon-producer stay 🔏 SEALED; only two different registered accounts earn 🕸️");
 }
 
 // 20. C2 fix: consolidate caps code count and dedupes (DoS amplification blocked)
