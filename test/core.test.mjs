@@ -127,7 +127,9 @@ let pass = 0; const ok = (n) => { console.log("  ✓", n); pass++; };
 
 // 10. billing: Free plan meters + gates handoffs; account view reports usage (M3-3)
 {
-  const acctView = core.account({});
+  // registered Free account → real 20/mo gate (anonymous shares a generous bucket instead)
+  core.setPlan({ api_key: "k-free", plan: "free" });
+  const acctView = core.account({ api_key: "k-free" });
   assert.equal(acctView.plan, "free");
   assert.equal(acctView.limits.snapshotsPerMonth, 20);
   // a Pro key is unlimited
