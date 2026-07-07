@@ -97,7 +97,7 @@ export function makeCore(store) {
       if (!["USDT", "USDC"].includes(token)) throw new Error("token must be USDT or USDC.");
       const v = await verifyPayment({ token, chain, txHash: tx_hash, minUsd: inv.amount });
       if (!v.ok) throw new Error(`Payment not verified: ${v.reason}`);
-      const settled = store.settleInvoice(invoice_id, { chain, txHash: tx_hash, plan: inv.plan, keyHash: inv.key_hash });
+      const settled = store.settleInvoice(invoice_id, { chain, txHash: tx_hash, plan: inv.plan, keyHash: inv.key_hash, token, actualAmount: v.amount });
       if (!settled.ok) throw new Error(settled.reason);
       return { ok: true, plan: inv.plan, amount_paid: v.amount, badge: `✅ Upgraded to ${inv.plan.toUpperCase()} — paid ${v.amount} ${token} on ${chain}` };
     },

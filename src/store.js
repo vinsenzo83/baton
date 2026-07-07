@@ -71,6 +71,12 @@ export function openStore(path = "./data/baton.db") {
   // M3-4: snapshot versioning — link a handoff to its parent + version number.
   try { db.exec(`ALTER TABLE snapshots ADD COLUMN parent_hash TEXT`); } catch { /* present */ }
   try { db.exec(`ALTER TABLE snapshots ADD COLUMN version INTEGER DEFAULT 1`); } catch { /* present */ }
+  // M3-5/6: record which token + actual on-chain amount settled an invoice (for admin revenue).
+  try { db.exec(`ALTER TABLE invoices ADD COLUMN token TEXT`); } catch { /* present */ }
+  try { db.exec(`ALTER TABLE invoices ADD COLUMN actual_amount REAL`); } catch { /* present */ }
+  // C1: purge any corpus rows containing HTML/angle-brackets (stored-XSS cleanup, idempotent).
+  try { db.exec(`DELETE FROM spider_patterns WHERE name LIKE '%<%' OR name LIKE '%>%'
+                 OR signal LIKE '%<%' OR fix LIKE '%<%' OR klass LIKE '%<%'`); } catch { /* table may not exist yet */ }
 
   const now = () => Date.now();
   const alive = (row) => row && (!row.expires_at || row.expires_at > now());
@@ -260,14 +266,15 @@ export function openStore(path = "./data/baton.db") {
     },
     getInvoice(id) { return db.prepare(`SELECT * FROM invoices WHERE id=?`).get(id) || null; },
     // Atomically settle an invoice + burn the tx hash (replay guard) + upgrade the account.
-    settleInvoice(id, { chain, txHash, plan, keyHash }) {
+    settleInvoice(id, { chain, txHash, plan, keyHash, token = null, actualAmount = null }) {
       const tx = db.transaction(() => {
         const inv = db.prepare(`SELECT status FROM invoices WHERE id=?`).get(id);
         if (!inv || inv.status === "paid") return { ok: false, reason: "invoice missing or already paid" };
         const used = db.prepare(`INSERT OR IGNORE INTO used_txs(tx_hash,chain,invoice_id,created_at) VALUES(?,?,?,?)`)
           .run(txHash, chain, id, now()).changes;
         if (!used) return { ok: false, reason: "this tx hash was already used" };
-        db.prepare(`UPDATE invoices SET status='paid', chain=?, tx_hash=? WHERE id=?`).run(chain, txHash, id);
+        db.prepare(`UPDATE invoices SET status='paid', chain=?, tx_hash=?, token=?, actual_amount=? WHERE id=?`)
+          .run(chain, txHash, token, actualAmount, id);
         db.prepare(`INSERT INTO accounts(key_hash,plan,created_at) VALUES(?,?,?)
                     ON CONFLICT(key_hash) DO UPDATE SET plan=excluded.plan`).run(keyHash, plan, now());
         return { ok: true };

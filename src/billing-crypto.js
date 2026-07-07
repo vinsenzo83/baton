@@ -34,6 +34,25 @@ export const priceUsd = (plan) => ({ pro: 8, team: 25 }[plan] || null);
 
 const TRANSFER_TOPIC = "ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
 
+// Tron base58check address → 40-hex (20-byte) address, no 0x/41 prefix. Needed to match
+// the recipient (topics[2]) and token contract (log.address) on-chain (C2 fix).
+const B58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+function tronToHex40(addr) {
+  if (!addr || addr[0] !== "T") return null;
+  const bytes = [0];
+  for (const ch of addr) {
+    let carry = B58.indexOf(ch);
+    if (carry < 0) return null;
+    for (let j = 0; j < bytes.length; j++) { carry += bytes[j] * 58; bytes[j] = carry & 0xff; carry >>= 8; }
+    while (carry) { bytes.push(carry & 0xff); carry >>= 8; }
+  }
+  for (const ch of addr) { if (ch === "1") bytes.push(0); else break; }
+  bytes.reverse();
+  const hex = Buffer.from(bytes).toString("hex"); // 41 + 20-byte addr + 4-byte checksum
+  if (hex.length < 42) return null;
+  return hex.slice(2, 42).toLowerCase();          // drop 41 prefix, take the 20-byte address
+}
+
 // EVM (BSC) via Etherscan V2 multichain API (chainid=56). Matches the ERC-20 Transfer log:
 // token contract == expected, recipient == our wallet, value >= min.
 async function verifyEvm({ txHash, wallet, contract, decimals, minUsd }) {
@@ -63,14 +82,20 @@ async function verifyTron({ txHash, wallet, contract, decimals, minUsd }) {
   }).then((x) => x.json()).catch(() => null);
   const logs = info?.log;
   if (!Array.isArray(logs) || !logs.length) return { ok: false, reason: "tx not found or not confirmed" };
+  const walletHex = tronToHex40(wallet);
+  const contractHex = tronToHex40(contract);
+  if (!walletHex || !contractHex) return { ok: false, reason: "bad wallet/contract address config" };
   for (const lg of logs) {
     if ((lg.topics?.[0] || "").toLowerCase() !== TRANSFER_TOPIC) continue;
-    // TronGrid log 'address' is the contract in hex (41-prefixed, no 0x). We match by amount+topic
-    // on the tx that called our token; recipient check via topic[2] last-40 vs wallet hex-suffix.
+    // C2: bind BOTH the token contract AND the recipient — not amount alone.
+    const logContract = (lg.address || "").toLowerCase().replace(/^41/, "");   // TronGrid: 41-prefixed hex
+    if (logContract !== contractHex) continue;                                  // must be OUR token
+    const to = (lg.topics?.[2] || "").slice(-40).toLowerCase();
+    if (to !== walletHex) continue;                                             // must be OUR wallet
     const amount = Number(BigInt("0x" + (lg.data || "0"))) / 10 ** decimals;
     if (amount + 1e-6 >= minUsd) return { ok: true, amount };
   }
-  return { ok: false, reason: "no matching TRC-20 transfer for the required amount" };
+  return { ok: false, reason: "no matching TRC-20 transfer of the right token to the wallet for the amount" };
 }
 
 export async function verifyPayment({ token, chain, txHash, minUsd }) {

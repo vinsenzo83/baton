@@ -25,6 +25,8 @@ const REDACTIONS = [
 /** 자유텍스트에서 코드·시크릿·식별정보 제거(일반화). */
 export function scrubText(input) {
   let s = String(input ?? '');
+  s = s.replace(/<[^>]*>/g, ' ');           // C1: strip HTML tags (stored-XSS defense)
+  s = s.replace(/[<>]/g, ' ');              // and any stray angle brackets
   for (const [re, repl] of REDACTIONS) s = s.replace(re, repl);
   return s.replace(/\s+/g, ' ').trim().slice(0, 600);
 }
