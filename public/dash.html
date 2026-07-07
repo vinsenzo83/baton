@@ -121,12 +121,14 @@ const I18N = {
     tabJoin:"Join with code", tabNew:"New room", lCode:"Room code (BTN-R-…)", lName:"Room name (optional)",
     lAlias:"Your name", enter:"Enter", enterNew:"Create & enter", copy:"Copy code", leave:"Leave",
     everyone:"Everyone", send:"Send", msgPh:"Type a message…", room:"Room",
-    needAlias:"Enter your name.", needCode:"Enter a room code.", reqFail:"Request failed", toName:(a)=>`to ${a}` },
+    needAlias:"Enter your name.", needCode:"Enter a room code.", reqFail:"Request failed", toName:(a)=>`to ${a}`,
+    pricing:"💡 Free: 5 trial handoffs · sign up for 20/mo · Pro $8 unlimited · Team $25 (10 sessions/room). Upgrade in your AI session with baton_upgrade." },
   ko: { title:"실시간 방", lead:'방 코드로 들어가면 쪽지가 실시간으로 뜹니다. 말로 "확인해줘" 안 해도 됩니다.',
     tabJoin:"코드로 입장", tabNew:"새 방 만들기", lCode:"방 코드 (BTN-R-…)", lName:"방 이름 (선택)",
     lAlias:"내 별명", enter:"입장", enterNew:"방 만들고 입장", copy:"코드 복사", leave:"나가기",
     everyone:"전체에게", send:"보내기", msgPh:"메시지를 입력…", room:"방",
-    needAlias:"별명을 입력하세요.", needCode:"방 코드를 입력하세요.", reqFail:"요청 실패", toName:(a)=>`→ ${a}` },
+    needAlias:"별명을 입력하세요.", needCode:"방 코드를 입력하세요.", reqFail:"요청 실패", toName:(a)=>`→ ${a}`,
+    pricing:"💡 무료 체험 5회 · 가입 시 월 20회 · Pro $8 무제한 · Team $25(방당 10세션). AI 세션에서 baton_upgrade로 업그레이드." },
 };
 let LANG = (localStorage.getItem("baton_lang") || (navigator.language||"en").slice(0,2)) === "ko" ? "ko" : "en";
 const T = () => I18N[LANG];
@@ -140,6 +142,7 @@ function applyLang() {
   $("to").options[0].textContent = t.everyone; $("t-send").textContent = t.send;
   $("msg").placeholder = t.msgPh;
   $("langtoggle").textContent = LANG === "en" ? "한국어" : "English";
+  $("t-pricing").textContent = t.pricing;
   document.documentElement.lang = LANG;
 }
 function toggleLang() { LANG = LANG === "en" ? "ko" : "en"; localStorage.setItem("baton_lang", LANG); applyLang(); }
