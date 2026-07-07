@@ -229,4 +229,27 @@ core.setPlan({ api_key: "tkey", plan: "pro" });   // unlimited key for handoff t
   ok("signed receipt: independent verify → 🕸️ badge; tampered/forged receipt rejected");
 }
 
-console.log(`\n🕸️  BATON: ${pass}/15 groups passed\n`);
+// 16. one-step verified handoff: pass with inline evidence → server mints+signs the receipt
+{
+  const r = core.pass({ api_key: "tkey",
+    snapshot: { context: { goal: "one-step verified handoff" } },
+    verify: {
+      environment: { os: "mac", node: "24" },
+      static_checks: [{ dim: "integration", passed: true, evidence: "wired" }],
+      e2e_evidence: [{ claim: "runs", observed: true, detail: "HTTP 200 + row +1" }],
+      artifacts: ["trace.zip"],
+    },
+  });
+  assert.equal(r.verified, true);                       // minted inline, no separate verify call
+  const got = core.receive({ code: r.code });
+  assert.match(got.badge, /signed receipt/);
+  assert.equal(got.receipt.verdict, "verified");
+  assert.equal(got.receipt.capsule, r.code);            // receipt bound to THIS handoff
+  // no E2E observation inline → static-only, no badge
+  const r2 = core.pass({ api_key: "tkey", snapshot: { context: { goal: "no e2e" } },
+    verify: { static_checks: [{ dim: "d", passed: true, evidence: "e" }] } });
+  assert.equal(r2.verified, false);
+  ok("one-step handoff: inline evidence → server-signed receipt; no E2E → no badge");
+}
+
+console.log(`\n🕸️  BATON: ${pass}/16 groups passed\n`);

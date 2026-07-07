@@ -227,7 +227,7 @@ export function makeCore(store) {
     // ---------- HANDOFF ----------
     // The client model fills `snapshot` in the BATON Snapshot v1 shape. We scrub secrets,
     // seal under a fresh code, and (optionally) attach a verification manifest.
-    pass({ snapshot, one_time = false, ttl_hours = 72, verify_manifest = null, receipt = null, parent_code = null, api_key = null } = {}) {
+    pass({ snapshot, one_time = false, ttl_hours = 72, verify = null, verify_manifest = null, receipt = null, parent_code = null, api_key = null } = {}) {
       if (!snapshot || !snapshot.context) throw new Error("snapshot.context is required (BATON Snapshot v1).");
       // M3-3: enforce the monthly snapshot quota (Free = 20/mo). Pro/Team are unlimited.
       const a = acct(api_key);
@@ -258,6 +258,15 @@ export function makeCore(store) {
       // Trust comes from a SERVER-SIGNED receipt (the differentiator): a signed receipt whose
       // verdict is "verified" is trusted because only the server could have signed it.
       let manifest = null, verified = 0;
+      // Convenience (dogfood UX fix): pass evidence inline and we mint+sign the receipt right
+      // here (capsule = this handoff), so "seal with proof" is one step, not verify-then-pass.
+      if (!receipt && verify && (verify.static_checks?.length || verify.e2e_evidence?.length)) {
+        receipt = issueReceipt({
+          verifier: verify.verifier || "self-attested", target: meta.title, capsule: code,
+          environment: verify.environment, static_checks: verify.static_checks || [],
+          e2e_evidence: verify.e2e_evidence || [], artifacts: verify.artifacts || [], issued_at: Date.now(),
+        });
+      }
       if (receipt) {
         const chk = verifyReceipt(receipt);
         if (chk.valid) { manifest = receipt; verified = receipt.verdict === "verified" ? 1 : 0; }
