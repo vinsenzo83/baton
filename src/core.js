@@ -8,7 +8,7 @@ import { roomCode, handoffCode, normalizeCode } from "./ids.js";
 import { fenceUntrusted, injectionFlags, scrubSecrets } from "./prompt-guard.js";
 import { sealBody } from "./crypto.js";
 import { gateVerdict } from "./verify.js";
-import { planOf, monthKey } from "./plans.js";
+import { planOf, monthKey, ANON_MONTHLY } from "./plans.js";
 import { codeHash } from "./crypto.js";
 
 const HOUR = 3600_000;
@@ -60,7 +60,7 @@ export function makeCore(store) {
       const a = acct(api_key);
       const period = monthKey(Date.now());
       const used = store.getUsage(a.keyHash || codeHash("anon:free"), "snapshots", period);
-      const cap = a.limits.snapshotsPerMonth;
+      const cap = a.keyHash ? a.limits.snapshotsPerMonth : ANON_MONTHLY;
       return {
         plan: a.plan, org: a.org || undefined,
         limits: { ...a.limits, snapshotsPerMonth: cap === Infinity ? "unlimited" : cap,
@@ -157,9 +157,13 @@ export function makeCore(store) {
       const period = monthKey(Date.now());
       if (a.limits.snapshotsPerMonth !== Infinity) {
         const key = a.keyHash || codeHash("anon:free");
+        // Registered Free account → real 20/mo gate. Anonymous shared bucket → generous ANON limit.
+        const limit = a.keyHash ? a.limits.snapshotsPerMonth : ANON_MONTHLY;
         const used = store.getUsage(key, "snapshots", period);
-        if (used >= a.limits.snapshotsPerMonth)
-          throw new Error(`Free plan limit reached (${a.limits.snapshotsPerMonth} handoffs/month). Upgrade to Pro for unlimited.`);
+        if (used >= limit)
+          throw new Error(a.keyHash
+            ? `Free plan limit reached (${limit} handoffs/month). Upgrade to Pro for unlimited.`
+            : `Anonymous handoff limit reached. Sign up for a free key to get your own quota.`);
       }
       // Free plan retention caps ttl.
       if (a.plan === "free") ttl_hours = Math.min(ttl_hours, a.limits.retentionDays * 24);
