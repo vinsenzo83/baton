@@ -11,11 +11,21 @@ import { planVerify, gateVerdict } from "./verify.js";
 
 const store = openStore(process.env.BATON_DB || "./data/baton.db");
 const core = makeCore(store);
-const server = new McpServer({ name: "baton", version: "0.1.0" });
 
 const json = (o) => ({ content: [{ type: "text", text: JSON.stringify(o, null, 2) }] });
 const wrap = (fn) => async (a) => { try { return json(await fn(a)); }
   catch (e) { return json({ error: String(e.message || e) }); } };
+
+// Build a fresh McpServer with all tools. In stateless HTTP mode the SDK wants a new
+// server+transport per request; store/core are shared singletons via closure.
+export function buildServer() {
+  const server = new McpServer({ name: "baton", version: "0.1.0" });
+  registerTools(server);
+  registerSpiderTools(server);
+  return server;
+}
+
+function registerTools(server) {
 
 // ───────────────────────── RELAY ─────────────────────────
 server.tool("baton_create_room",
@@ -84,8 +94,7 @@ server.tool("baton_verify",
   },
   wrap((a) => gateVerdict(a)));
 
-// ───────────────────────── SPIDER engine (absorbed recluse) ─────────────────────────
-registerSpiderTools(server);
+} // end registerTools
 
 // ───────────────────────── transport ─────────────────────────
 if (process.env.BATON_HTTP === "1") {
@@ -93,13 +102,26 @@ if (process.env.BATON_HTTP === "1") {
   const express = (await import("express")).default;
   const app = express();
   app.use(express.json({ limit: "1mb" }));
-  const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
-  await server.connect(transport);
-  app.all("/mcp", (req, res) => transport.handleRequest(req, res, req.body));
   app.get("/health", (_q, r) => r.json({ ok: true, name: "baton", version: "0.1.0" }));
+  // Stateless: a fresh server+transport per POST (SDK's stateless pattern).
+  app.post("/mcp", async (req, res) => {
+    const server = buildServer();
+    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+    res.on("close", () => { transport.close(); server.close(); });
+    try {
+      await server.connect(transport);
+      await transport.handleRequest(req, res, req.body);
+    } catch (e) {
+      console.error("MCP request error:", e);
+      if (!res.headersSent) res.status(500).json({ jsonrpc: "2.0", error: { code: -32603, message: String(e.message || e) }, id: null });
+    }
+  });
+  // No server-initiated stream in stateless mode.
+  app.get("/mcp", (_q, r) => r.status(405).json({ jsonrpc: "2.0", error: { code: -32000, message: "Method Not Allowed (stateless)" }, id: null }));
   const port = process.env.PORT || 8080;
-  app.listen(port, () => console.error(`BATON MCP (HTTP) on :${port}/mcp`));
+  app.listen(port, () => console.error(`BATON MCP (HTTP, stateless) on :${port}/mcp`));
 } else {
+  const server = buildServer();
   await server.connect(new StdioServerTransport());
   console.error("BATON MCP (stdio) ready — relay · handoff · spider verify");
 }

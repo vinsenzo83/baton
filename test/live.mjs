@@ -3,12 +3,12 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 
-const URL = process.argv[2] || "https://baton-mcp-production.up.railway.app/mcp";
+const ENDPOINT = process.argv[2] || "https://baton-mcp-production.up.railway.app/mcp";
 const parse = (r) => JSON.parse(r.content[0].text);
 let pass = 0; const ok = (n) => { console.log("  ✓", n); pass++; };
 
 const client = new Client({ name: "baton-live-probe", version: "1.0.0" });
-await client.connect(new StreamableHTTPClientTransport(new URL(URL)));
+await client.connect(new StreamableHTTPClientTransport(new URL(ENDPOINT)));
 const call = (name, args) => client.callTool({ name, arguments: args });
 
 // 0. tools present
@@ -75,5 +75,5 @@ let handoffCode;
   ok("revoke: handoff code crypto-shredded live");
 }
 
-console.log(`\n🕸️  BATON LIVE: ${pass}/6 groups passed against ${URL}\n`);
+console.log(`\n🕸️  BATON LIVE: ${pass}/6 groups passed against ${ENDPOINT}\n`);
 await client.close();
