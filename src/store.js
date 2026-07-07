@@ -191,8 +191,13 @@ export function openStore(path = "./data/baton.db") {
       const row = db.prepare(`SELECT * FROM snapshots WHERE code_hash=?`).get(codeHash(code));
       // HIGH-2: a consumed one-time snapshot must not be re-readable via diff/peek either.
       if (!alive(row) || row.consumed) return null;
-      return { meta: { title: row.title, project: row.project }, version: row.version || 1,
-        body: JSON.parse(openBody(code, row)) };
+      return {
+        meta: { title: row.title, project: row.project, author: row.author, source_model: row.source_model },
+        version: row.version || 1,
+        verified: !!row.verified,
+        manifest: row.verify_manifest ? JSON.parse(row.verify_manifest) : null,
+        body: JSON.parse(openBody(code, row)),
+      };
     },
     // Atomic one-time redemption: returns the row only if it wasn't already consumed (H4 TOCTOU).
     takeSnapshot(code) {

@@ -343,12 +343,57 @@ export function makeCore(store) {
     // ---------- VERIFICATION RECEIPT (the differentiator) ----------
     // An INDEPENDENT verifier (not the producer) replays the work and gets a server-SIGNED
     // receipt. Attach it to baton_pass so the receiver trusts observed evidence, not a claim.
-    verify({ target, capsule, environment, static_checks, e2e_evidence, artifacts } = {}) {
+    verify({ target, capsule, environment, static_checks, e2e_evidence, artifacts, verifier } = {}) {
       return issueReceipt({
-        verifier: "receiver-spider", target, capsule, environment,
+        // WHO verified — ideally the domain expert (e.g. "TM-expert-15yr"), since only someone
+        // who knows the field can judge whether the AI's output is actually right.
+        verifier: verifier || "receiver-spider", target, capsule, environment,
         static_checks: static_checks || [], e2e_evidence: e2e_evidence || [],
         artifacts: artifacts || [], issued_at: Date.now(),
       });
+    },
+
+    // ---------- CONSOLIDATE (결과 도출) ----------
+    // Gather several departments' handoffs into ONE result board a HUMAN reads and judges.
+    // Not AI-automatic: it surfaces each dept's work + its verification tier so a person can
+    // see at a glance what's independently verified vs only self-attested vs unverified.
+    consolidate({ codes = [] } = {}) {
+      if (!Array.isArray(codes) || codes.length === 0) throw new Error("codes[] is required (the handoff codes to consolidate).");
+      const departments = codes.map((c) => {
+        const code = normalizeCode(c);
+        const snap = store.peekSnapshot(code);
+        if (!snap) return { code, error: "invalid, expired, or consumed (one-time)" };
+        const m = snap.manifest;
+        const isReceipt = m && m.kind === "baton.verification-receipt/v1";
+        const ctx = snap.body?.context || {};
+        return {
+          code, title: snap.meta?.title || "untitled", author: snap.meta?.author || "unknown",
+          model: snap.meta?.source_model || null,
+          goal: ctx.goal || null, current_state: ctx.current_state || null,
+          next_steps: snap.body?.next_steps || [],
+          verified: !!snap.verified,
+          tier: isReceipt ? m.tier : (snap.verified ? "legacy" : null),
+          verifier: isReceipt ? m.verifier : null,
+          badge: isReceipt ? m.badge : (snap.verified ? "🕸️ VERIFIED" : "⚪ UNVERIFIED"),
+          reason: isReceipt ? m.reason : null,
+        };
+      });
+      const ok = departments.filter((d) => !d.error);
+      const independent = ok.filter((d) => d.verified && d.tier === "independent").length;
+      const selfAtt = ok.filter((d) => d.verified && d.tier === "self-attested").length;
+      const unver = ok.filter((d) => !d.verified).length;
+      const failed = departments.filter((d) => d.error).length;
+      return {
+        summary: `${ok.length} handoff(s) · ${independent} independently verified · ${selfAtt} self-attested · ${unver} unverified${failed ? ` · ${failed} unreadable` : ""}`,
+        trust: unver > 0 || selfAtt > 0
+          ? "⚠️ Not all results are independently verified — cross-verify the 🔏/⚪ items before finalizing (the producer grading their own work isn't trust)."
+          : independent === ok.length && ok.length > 0
+            ? "✅ Every result was independently verified — safe to finalize."
+            : "No verified results yet.",
+        departments,
+        open_next_steps: ok.flatMap((d) => d.next_steps),
+        note: "This is a decision board for a human — review the evidence, don't rubber-stamp.",
+      };
     },
 
     // M3-4: diff two handoff snapshots — what changed between versions (decisions, next steps, state).

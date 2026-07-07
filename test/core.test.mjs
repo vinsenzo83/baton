@@ -272,4 +272,28 @@ core.setPlan({ api_key: "tkey", plan: "pro" });   // unlimited key for handoff t
   ok("auto-delivery: pass(room) drops the handoff code into the room inbox — no copy-paste");
 }
 
-console.log(`\n🕸️  BATON: ${pass}/17 groups passed\n`);
+// 18. consolidate: gather departments' handoffs into one result board with trust tiers
+{
+  // dept A: independently verified
+  const recA = core.verify({ target: "TM script", verifier: "TM-expert-15yr",
+    static_checks: [{ dim: "d", passed: true, evidence: "e" }],
+    e2e_evidence: [{ claim: "call flow works", observed: true, detail: "실통화 관측" }] });
+  const a = core.pass({ api_key: "tkey", receipt: recA, snapshot: { context: { goal: "TM 상담 스크립트 고도화" }, next_steps: ["A/B 테스트"] } });
+  // dept B: self-attested only
+  const b = core.pass({ api_key: "tkey", snapshot: { context: { goal: "회계 마감 자동화" }, next_steps: ["감사"] },
+    verify: { static_checks: [{ dim: "d", passed: true, evidence: "e" }], e2e_evidence: [{ claim: "합계 맞음", observed: true, detail: "수기대조" }] } });
+  // dept C: unverified
+  const c = core.pass({ api_key: "tkey", snapshot: { context: { goal: "마케팅 카피" }, next_steps: ["게시"] } });
+
+  const board = core.consolidate({ codes: [a.code, b.code, c.code] });
+  assert.equal(board.departments.length, 3);
+  assert.match(board.summary, /1 independently verified/);
+  assert.match(board.summary, /1 self-attested/);
+  assert.match(board.summary, /1 unverified/);
+  assert.match(board.trust, /cross-verify/);              // warns because not all independent
+  assert.equal(board.departments[0].verifier, "TM-expert-15yr");  // WHO verified is surfaced
+  assert.deepEqual(board.open_next_steps.sort(), ["A/B 테스트", "감사", "게시"].sort());
+  ok("consolidate: dept handoffs → one board w/ trust tiers + who-verified + open steps");
+}
+
+console.log(`\n🕸️  BATON: ${pass}/18 groups passed\n`);

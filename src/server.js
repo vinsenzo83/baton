@@ -126,6 +126,11 @@ server.tool("baton_revoke", "방/핸드오프 코드를 즉시 파기한다(cryp
   { code: z.string() }, wrap((a) => core.revoke(a)));
 
 // ───────────────────────── VERIFY (spider gate) ─────────────────────────
+server.tool("baton_consolidate",
+  "여러 부서/전문가의 핸드오프를 한 결과 보드로 취합한다. 각 결과의 검증 티어(독립검증 🕸️ / 자가증명 🔏 / 미검증 ⚪)와 '누가 검증했나'를 한눈에 — 사람이 최종 판단하는 결정판(AI 자동 승인 아님).",
+  { codes: z.array(z.string()).describe("취합할 핸드오프 코드(BTN-H-…) 목록") },
+  wrap((a) => core.consolidate(a)));
+
 server.tool("baton_verify_plan",
   "수신측 거미 검증 계획을 반환한다. 정적 차원 + 반드시 실행할 E2E 프로브. '빌드 통과 ≠ 동작' — 완료 주장마다 실제 관측을 요구.",
   { target: z.string().describe("검증 대상(레포/기능/스냅샷)"), claims: z.array(z.string()).optional().describe("검증할 완료 주장 목록") },
@@ -135,6 +140,7 @@ server.tool("baton_verify",
   "독립 검증자가 넘어온 작업을 실제 실행·관측한 결과로 '서명된 검증 영수증(receipt)'을 발급한다. E2E 관측이 없으면 verified 불가(static-only). 영수증은 서버 서명이라 위조 불가 — baton_pass의 receipt 인자로 첨부하면 🕸️ 배지가 붙는다. 'AI 작업은 영수증 없이 믿지 마라.'",
   {
     target: z.string().describe("검증 대상(기능/플로우)"),
+    verifier: z.string().optional().describe("검증한 사람/전문가 신원(예: 'TM-expert-15yr'). 그 분야 전문가가 검증해야 진짜 신뢰 — 영수증에 남는다"),
     capsule: z.string().optional().describe("검증하는 핸드오프 코드/해시"),
     environment: z.record(z.any()).optional().describe("재현 환경(os·runtime·commit 등)"),
     static_checks: z.array(z.object({ dim: z.string(), passed: z.boolean(), evidence: z.string() })).optional(),
