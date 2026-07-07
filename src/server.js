@@ -29,8 +29,8 @@ function registerTools(server) {
 
 // ───────────────────────── RELAY ─────────────────────────
 server.tool("baton_create_room",
-  "협업 방을 만들고 초대코드(BTN-R-…)를 발급한다. 코드를 아는 세션만(모델 불문) 입장.",
-  { name: z.string().optional().describe("방 이름"), ttl_hours: z.number().optional().describe("만료(기본 72h)") },
+  "협업 방을 만들고 초대코드(BTN-R-…)를 발급한다. alias를 주면 만든 사람이 자동 입장(별도 join 불필요)하고 member_id를 함께 반환. 코드를 아는 세션만(모델 불문) 입장.",
+  { name: z.string().optional().describe("방 이름"), ttl_hours: z.number().optional().describe("만료(기본 72h)"), alias: z.string().optional().describe("내 별명 — 주면 방 생성과 동시에 자동 입장") },
   wrap((a) => core.createRoom(a)));
 
 server.tool("baton_join",

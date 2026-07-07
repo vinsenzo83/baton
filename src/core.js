@@ -13,10 +13,14 @@ const HOUR = 3600_000;
 export function makeCore(store) {
   return {
     // ---------- RELAY ----------
-    createRoom({ name, ttl_hours = 72 } = {}) {
+    createRoom({ name, ttl_hours = 72, alias } = {}) {
       const code = roomCode();
       store.createRoom(code, name, ttl_hours * HOUR);
+      // Creator auto-joins in one step (no separate baton_join needed).
+      let member_id = null;
+      if (alias) member_id = store.join(code, alias, "creator").id;
       return { code, name: name || null, expires_in_hours: ttl_hours,
+        member_id, alias: alias || null,
         share: `이 코드를 아는 세션만 입장합니다: ${code}` };
     },
 
