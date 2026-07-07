@@ -1,0 +1,148 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BATON — Result Board</title>
+<style>
+  :root{
+    --bg:#0e0f12; --panel:#15171c; --line:#22252c; --line2:#2b2f38;
+    --ink:#f4f2ee; --ink2:#a7adb8; --ink3:#6b7280;
+    --accent:#ff6a1a; --green:#3fd07a; --amber:#ffc44d; --grey:#6b7280;
+    --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,"Pretendard",sans-serif;line-height:1.5}
+  .wrap{max-width:920px;margin:0 auto;padding:28px 20px 80px}
+  header{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin-bottom:6px}
+  h1{font-size:22px;margin:0;letter-spacing:-.01em}
+  h1 .run{color:var(--accent)}
+  .sub{color:var(--ink3);font-size:13px}
+  .lead{color:var(--ink2);font-size:14px;margin:10px 0 22px;max-width:64ch}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px}
+  label{display:block;font-size:12px;letter-spacing:.04em;text-transform:uppercase;color:var(--ink3);margin-bottom:8px}
+  textarea{width:100%;min-height:96px;background:#0b0c0f;border:1px solid var(--line2);border-radius:10px;color:var(--ink);font-family:var(--mono);font-size:13px;padding:12px;resize:vertical}
+  textarea:focus{outline:none;border-color:var(--accent)}
+  .btn{margin-top:12px;background:var(--accent);color:#160a03;border:0;border-radius:10px;padding:11px 18px;font-weight:700;font-size:14px;cursor:pointer}
+  .btn:disabled{opacity:.5;cursor:default}
+  .err{color:#ff7a6b;font-size:13px;margin-top:10px;min-height:1em}
+
+  .summary{margin:24px 0 14px;display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+  .pill{font-family:var(--mono);font-size:12.5px;padding:6px 11px;border-radius:999px;border:1px solid var(--line2);color:var(--ink2)}
+  .pill b{color:var(--ink)}
+  .trust{border-radius:12px;padding:13px 16px;font-size:13.5px;line-height:1.55;margin-bottom:20px}
+  .trust.warn{background:rgba(255,196,77,.09);border:1px solid rgba(255,196,77,.35);color:#ffd98a}
+  .trust.ok{background:rgba(63,208,122,.09);border:1px solid rgba(63,208,122,.35);color:#9be9bd}
+
+  .depts{display:grid;gap:12px}
+  .dept{background:var(--panel);border:1px solid var(--line);border-left-width:4px;border-radius:12px;padding:15px 17px}
+  .dept.verified{border-left-color:var(--green)}
+  .dept.sealed{border-left-color:var(--amber)}
+  .dept.unverified{border-left-color:var(--grey)}
+  .dept.error{border-left-color:#ff7a6b;opacity:.75}
+  .drow{display:flex;justify-content:space-between;align-items:flex-start;gap:14px}
+  .dtitle{font-weight:700;font-size:15.5px}
+  .dmeta{color:var(--ink3);font-size:12.5px;margin-top:2px}
+  .dgoal{color:var(--ink2);font-size:13.5px;margin-top:9px}
+  .badge{font-family:var(--mono);font-size:12px;white-space:nowrap;padding:5px 10px;border-radius:8px;font-weight:700}
+  .badge.verified{background:rgba(63,208,122,.14);color:var(--green)}
+  .badge.sealed{background:rgba(255,196,77,.14);color:var(--amber)}
+  .badge.unverified{background:rgba(107,114,128,.16);color:#9aa1ad}
+  .who{font-family:var(--mono);font-size:12px;color:var(--ink2);margin-top:8px}
+  .who .lbl{color:var(--ink3)}
+  .reason{font-size:12px;color:var(--ink3);margin-top:6px;font-style:italic}
+  .steps{margin-top:8px;display:flex;gap:6px;flex-wrap:wrap}
+  .step{font-size:12px;background:#0b0c0f;border:1px solid var(--line2);border-radius:6px;padding:3px 9px;color:var(--ink2)}
+  .nextbox{margin-top:22px}
+  .code{font-family:var(--mono);font-size:11px;color:var(--ink3);margin-top:8px;word-break:break-all}
+  .empty{color:var(--ink3);text-align:center;padding:40px;font-size:14px}
+  .foot{margin-top:34px;color:var(--ink3);font-size:12px;line-height:1.7}
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>🏃 BATON <span class="run">Result Board</span></h1>
+    <span class="sub">각 부서가 AI로 일한 결과를 · 검증 상태와 함께 · 한눈에</span>
+  </header>
+  <p class="lead">부서별 핸드오프 코드(<span style="font-family:var(--mono)">BTN-H-…</span>)를 넣으면, 무엇을 믿고(🕸️ 독립검증) 무엇을 더 봐야 하는지(🔏 자가증명 · ⚪ 미검증) 한 판에 보여줍니다. 사람이 판단하는 결정 보드예요.</p>
+
+  <div class="card">
+    <label for="codes">핸드오프 코드 (한 줄에 하나, 또는 쉼표로 구분)</label>
+    <textarea id="codes" placeholder="BTN-H-....
+BTN-H-....
+BTN-H-...."></textarea>
+    <button class="btn" id="go" onclick="run()">결과 취합</button>
+    <div class="err" id="err"></div>
+  </div>
+
+  <div id="out"></div>
+
+  <div class="foot">
+    🕸️ VERIFIED = 그 분야 전문가(생산자 아님)가 독립 검증 → 확정 가능 &nbsp;·&nbsp;
+    🔏 SEALED = 만든 사람이 자기 검증만 → 교차검증 필요 &nbsp;·&nbsp;
+    ⚪ UNVERIFIED = 검증 안 됨.<br>
+    영수증은 서버가 서명해 위조 불가. 검증은 그 업무를 아는 사람만 할 수 있습니다.
+  </div>
+</div>
+
+<script>
+const API = "https://baton-mcp-production.up.railway.app";
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+function tierClass(d){
+  if (d.error) return "error";
+  if (d.verified && d.tier === "independent") return "verified";
+  if (d.verified) return "sealed";
+  return "unverified";
+}
+function badgeText(d){
+  if (d.error) return "⚠ UNREADABLE";
+  if (d.verified && d.tier === "independent") return "🕸️ VERIFIED";
+  if (d.verified) return "🔏 SEALED";
+  return "⚪ UNVERIFIED";
+}
+
+async function run(){
+  $("err").textContent = "";
+  const raw = $("codes").value.trim();
+  const codes = raw.split(/[\n,]+/).map((s) => s.trim()).filter(Boolean);
+  if (!codes.length){ $("err").textContent = "핸드오프 코드를 하나 이상 넣으세요."; return; }
+  $("go").disabled = true; $("go").textContent = "취합 중…";
+  try{
+    const r = await fetch(API + "/api/consolidate", {
+      method:"POST", headers:{"content-type":"application/json"}, body:JSON.stringify({ codes }),
+    });
+    const data = await r.json();
+    if (data.error){ $("err").textContent = data.error; return; }
+    render(data);
+  }catch(e){ $("err").textContent = "요청 실패: " + e.message; }
+  finally{ $("go").disabled = false; $("go").textContent = "결과 취합"; }
+}
+
+function render(b){
+  const cls = /독립|independently verified/.test(b.trust) && !/⚠/.test(b.trust) ? "ok" : "warn";
+  const depts = (b.departments || []).map((d) => {
+    const k = tierClass(d);
+    if (d.error) return `<div class="dept error"><div class="drow"><div><div class="dtitle">${esc(d.title||d.code)}</div>
+      <div class="dmeta">읽을 수 없음 — ${esc(d.error)}</div></div><span class="badge unverified">⚠ UNREADABLE</span></div>
+      <div class="code">${esc(d.code)}</div></div>`;
+    const steps = (d.next_steps||[]).map((s)=>`<span class="step">${esc(s)}</span>`).join("");
+    return `<div class="dept ${k}">
+      <div class="drow">
+        <div><div class="dtitle">${esc(d.title)}</div><div class="dmeta">${esc(d.author||"unknown")}${d.model?" · "+esc(d.model):""}</div></div>
+        <span class="badge ${k}">${badgeText(d)}</span>
+      </div>
+      ${d.goal?`<div class="dgoal">${esc(d.goal)}</div>`:""}
+      <div class="who"><span class="lbl">검증자</span> ${d.verifier?esc(d.verifier):'<span style="color:var(--ink3)">— 아직 없음</span>'}</div>
+      ${d.reason && !d.verified?`<div class="reason">${esc(d.reason)}</div>`:""}
+      ${steps?`<div class="steps">${steps}</div>`:""}
+    </div>`;
+  }).join("");
+
+  const nextSteps = (b.open_next_steps||[]);
+  $("out").innerHTML = `
+    <div class="summary"><span class="pill">${esc(b.summary)}</span></div>
+    <div class="trust ${cls}">${esc(b.trust)}</div>
+    <div class="depts">${depts || '<div class="empty">결과 없음</div>'}</div>
+    ${nextSteps.length?`<div class="nextbox"><label>남은 할 일 (전 부서 취합)</label><div class="steps">${nextSteps.map((s)=>`<span class="step">${esc(s)}</span>`).join("")}</div></div>`:""}
+  `;
+}
+</script>

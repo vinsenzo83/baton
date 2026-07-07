@@ -192,6 +192,7 @@ if (process.env.BATON_HTTP === "1") {
   app.post("/api/send",   rlWrite, api((b) => core.send(b)));
   app.post("/api/inbox",  rlRead,  api((b) => core.inboxRaw(b)));
   app.post("/api/leave",  rlWrite, api((b) => core.leave(b)));
+  app.post("/api/consolidate", rlRead, api((b) => core.consolidate(b)));   // result board
 
   // ── Shared spider corpus (M2-2), same shape spider_* tools speak (/v1/patterns) ──
   const { preparePattern } = await import("./corpus-scrub.js");
