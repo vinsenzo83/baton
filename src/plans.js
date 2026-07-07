@@ -3,25 +3,26 @@
 export const PLANS = {
   free: {
     label: "Free", price: 0,
-    limits: { snapshotsPerMonth: 20, activeRooms: 2, retentionDays: 7, corpusPull: true },
+    limits: { snapshotsPerMonth: 20, activeRooms: 2, seats: 1, retentionDays: 7, corpusPull: true },
   },
   pro: {
     label: "Pro", price: 8,
-    limits: { snapshotsPerMonth: Infinity, activeRooms: Infinity, retentionDays: 90, corpusPull: true },
+    limits: { snapshotsPerMonth: Infinity, activeRooms: 20, seats: 1, retentionDays: 90, corpusPull: true },
   },
   team: {
+    // Seat-based: base price covers `seats` concurrent members sharing the org (measured by
+    // join events, no heartbeat needed). This is the healthy "collaboration" charge (§ pricing review).
     label: "Team", price: 25,
-    limits: { snapshotsPerMonth: Infinity, activeRooms: Infinity, retentionDays: 365, corpusPull: true, org: true, audit: true },
+    limits: { snapshotsPerMonth: Infinity, activeRooms: Infinity, seats: 5, retentionDays: 365, corpusPull: true, org: true, audit: true },
   },
 };
 
 export function planOf(name) { return PLANS[name] || PLANS.free; }
 
-// Anonymous (no api_key / unregistered) callers share ONE global bucket because MCP tool
-// calls carry no client IP. Keep it generous so honest anonymous use isn't griefed by one
-// heavy user; the real paid gate (20/mo) applies to REGISTERED Free accounts. At payment
-// launch this converts to "signup required for a personal bucket" (see BILLING.md).
-export const ANON_MONTHLY = 10000;
+// Anonymous (no api_key) = a small free TRIAL, per-key-less shared bucket. Low on purpose so
+// real use hits the wall and converts to a free signup (baton_signup → own 20/mo bucket).
+// Tune here; the whole funnel keys off this number.
+export const ANON_MONTHLY = 5;
 
 // yyyy-mm bucket for monthly counters. Timestamp passed in (Date.now() is unavailable in some contexts).
 export function monthKey(ts) {

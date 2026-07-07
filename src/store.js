@@ -74,6 +74,8 @@ export function openStore(path = "./data/baton.db") {
   // M3-5/6: record which token + actual on-chain amount settled an invoice (for admin revenue).
   try { db.exec(`ALTER TABLE invoices ADD COLUMN token TEXT`); } catch { /* present */ }
   try { db.exec(`ALTER TABLE invoices ADD COLUMN actual_amount REAL`); } catch { /* present */ }
+  // B (seats): tag rooms with an owner so the active-room limit can be enforced per account.
+  try { db.exec(`ALTER TABLE rooms ADD COLUMN owner_hash TEXT`); } catch { /* present */ }
   // C1: purge any corpus rows containing HTML/angle-brackets (stored-XSS cleanup, idempotent).
   try { db.exec(`DELETE FROM spider_patterns WHERE name LIKE '%<%' OR name LIKE '%>%'
                  OR signal LIKE '%<%' OR fix LIKE '%<%' OR klass LIKE '%<%'`); } catch { /* table may not exist yet */ }
@@ -83,12 +85,22 @@ export function openStore(path = "./data/baton.db") {
 
   return {
     // ---- rooms ----
-    createRoom(code, name, ttlMs) {
+    createRoom(code, name, ttlMs, ownerHash = null) {
       const s = sealBody(code, name || "");
-      db.prepare(`INSERT INTO rooms(code_hash,name,salt,iv,tag,ct,created_at,expires_at)
-                  VALUES(?,?,?,?,?,?,?,?)`).run(
-        codeHash(code), null, s.salt, s.iv, s.tag, s.ct, now(), ttlMs ? now() + ttlMs : null);
+      db.prepare(`INSERT INTO rooms(code_hash,name,salt,iv,tag,ct,created_at,expires_at,owner_hash)
+                  VALUES(?,?,?,?,?,?,?,?,?)`).run(
+        codeHash(code), null, s.salt, s.iv, s.tag, s.ct, now(), ttlMs ? now() + ttlMs : null, ownerHash);
       return true;
+    },
+    // Count an owner's still-alive rooms (for the activeRooms limit).
+    ownerActiveRooms(ownerHash) {
+      if (!ownerHash) return 0;
+      return db.prepare(`SELECT COUNT(*) AS n FROM rooms WHERE owner_hash=? AND (expires_at IS NULL OR expires_at > ?)`)
+        .get(ownerHash, now()).n;
+    },
+    // Global active-room count (admin stat).
+    activeRoomsTotal() {
+      return db.prepare(`SELECT COUNT(*) AS n FROM rooms WHERE expires_at IS NULL OR expires_at > ?`).get(now()).n;
     },
     getRoom(code) {
       const r = db.prepare(`SELECT * FROM rooms WHERE code_hash=?`).get(codeHash(code));

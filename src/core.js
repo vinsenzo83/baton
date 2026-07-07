@@ -56,6 +56,19 @@ export function makeCore(store) {
   };
 
   return {
+    // ---------- SIGNUP (funnel) ----------
+    // Self-serve free account. Creates a personal Free bucket (20/mo). No email/payment.
+    // Returns an api_key the user saves and attaches (Authorization: Bearer, or api_key arg).
+    signup({ api_key } = {}) {
+      const key = api_key && api_key.length >= 12 ? api_key : ("btn_" + roomCode().replace(/^BTN-R-/, "").replace(/-/g, "").toLowerCase());
+      store.upsertAccount(codeHash(key), { plan: "free" });
+      return {
+        api_key: key, plan: "free", handoffs_per_month: planOf("free").limits.snapshotsPerMonth,
+        how_to_use: "Save this key privately. Add it to your MCP client once — `claude mcp add --transport http baton <url>/mcp --header \"Authorization: Bearer " + key + "\"` — or pass api_key to baton_pass. Then upgrade anytime with baton_upgrade.",
+        note: "This key IS your account. Anyone with it uses your quota — keep it secret.",
+      };
+    },
+
     // ---------- ACCOUNT / BILLING (M3-3) ----------
     // View plan, limits, and current usage. Anonymous callers are Free.
     account({ api_key } = {}) {
@@ -66,9 +79,10 @@ export function makeCore(store) {
       return {
         plan: a.plan, org: a.org || undefined,
         limits: { ...a.limits, snapshotsPerMonth: cap === Infinity ? "unlimited" : cap,
-          activeRooms: a.limits.activeRooms === Infinity ? "unlimited" : a.limits.activeRooms },
+          activeRooms: a.limits.activeRooms === Infinity ? "unlimited" : a.limits.activeRooms,
+          seats: a.limits.seats },
         usage: { snapshots_this_month: used, remaining: cap === Infinity ? "unlimited" : Math.max(0, cap - used) },
-        upgrade: a.plan === "free" ? "Pro $8/mo · Team $25/mo — contact to upgrade" : undefined,
+        upgrade: a.plan === "free" ? "Run baton_upgrade to go Pro ($8/mo, unlimited handoffs) or Team ($25/mo)." : undefined,
       };
     },
     // ---------- CRYPTO PAYMENTS (M3-5) ----------
@@ -110,11 +124,18 @@ export function makeCore(store) {
       return { ok: true, plan };
     },
     // ---------- RELAY ----------
-    createRoom({ name, ttl_hours = 72, alias } = {}) {
+    createRoom({ name, ttl_hours = 72, alias, api_key } = {}) {
       ttl_hours = sanitizeTtl(ttl_hours);           // L2: reject non-numeric ttl (no永구방)
       if (alias != null) alias = normalizeAlias(alias);
+      // B (seats): enforce the active-room limit per account (Free 2 · Pro 20 · Team ∞).
+      const a = acct(api_key);
+      if (a.keyHash && a.limits.activeRooms !== Infinity) {
+        const open = store.ownerActiveRooms(a.keyHash);
+        if (open >= a.limits.activeRooms)
+          throw new Error(`Active-room limit reached (${a.limits.activeRooms} on ${a.plan}). Close a room or run baton_upgrade.`);
+      }
       const code = roomCode();
-      store.createRoom(code, name, ttl_hours * HOUR);
+      store.createRoom(code, name, ttl_hours * HOUR, a.keyHash || null);
       // Creator auto-joins in one step (no separate baton_join needed).
       let member_id = null;
       if (alias) member_id = store.join(code, alias, "creator").id;
@@ -195,8 +216,8 @@ export function makeCore(store) {
         const used = store.getUsage(key, "snapshots", period);
         if (used >= limit)
           throw new Error(a.keyHash
-            ? `Free plan limit reached (${limit} handoffs/month). Upgrade to Pro for unlimited.`
-            : `Anonymous handoff limit reached. Sign up for a free key to get your own quota.`);
+            ? `Free plan limit reached (${limit} handoffs/month). Run baton_upgrade for Pro (unlimited, $8/mo).`
+            : `Free trial limit reached (${limit}/month). Run baton_signup for a free account (${planOf("free").limits.snapshotsPerMonth}/mo), or baton_upgrade for Pro (unlimited).`);
       }
       // Free plan retention caps ttl.
       if (a.plan === "free") ttl_hours = Math.min(ttl_hours, a.limits.retentionDays * 24);

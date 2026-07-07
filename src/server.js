@@ -13,24 +13,31 @@ const store = openStore(process.env.BATON_DB || "./data/baton.db");
 const core = makeCore(store);
 
 const json = (o) => ({ content: [{ type: "text", text: JSON.stringify(o, null, 2) }] });
-const wrap = (fn) => async (a) => { try { return json(await fn(a)); }
-  catch (e) { return json({ error: String(e.message || e) }); } };
 
 // Build a fresh McpServer with all tools. In stateless HTTP mode the SDK wants a new
 // server+transport per request; store/core are shared singletons via closure.
-export function buildServer() {
+// defaultApiKey (from the request's Authorization: Bearer header) is auto-attached to any
+// tool that takes api_key, so a paid user sets the header once instead of passing it every call.
+export function buildServer(defaultApiKey = null) {
   const server = new McpServer({ name: "baton", version: "0.1.0" });
-  registerTools(server);
+  registerTools(server, defaultApiKey);
   registerSpiderTools(server);
   return server;
 }
 
-function registerTools(server) {
+function registerTools(server, defaultApiKey) {
+  // Auto-fill api_key from the Bearer header when the call didn't pass one explicitly.
+  const wrap = (fn) => async (a) => {
+    try {
+      const args = defaultApiKey && a && a.api_key === undefined ? { ...a, api_key: defaultApiKey } : a;
+      return json(await fn(args));
+    } catch (e) { return json({ error: String(e.message || e) }); }
+  };
 
 // ───────────────────────── RELAY ─────────────────────────
 server.tool("baton_create_room",
   "협업 방을 만들고 초대코드(BTN-R-…)를 발급한다. alias를 주면 만든 사람이 자동 입장(별도 join 불필요)하고 member_id를 함께 반환. 코드를 아는 세션만(모델 불문) 입장.",
-  { name: z.string().optional().describe("방 이름"), ttl_hours: z.number().optional().describe("만료(기본 72h)"), alias: z.string().optional().describe("내 별명 — 주면 방 생성과 동시에 자동 입장") },
+  { name: z.string().optional().describe("방 이름"), ttl_hours: z.number().optional().describe("만료(기본 72h)"), alias: z.string().optional().describe("내 별명 — 주면 방 생성과 동시에 자동 입장"), api_key: z.string().optional().describe("계정 키(방 한도·시트 적용). Authorization 헤더로도 자동 첨부") },
   wrap((a) => core.createRoom(a)));
 
 server.tool("baton_join",
@@ -78,6 +85,11 @@ server.tool("baton_diff",
   "두 핸드오프 스냅샷을 비교해 무엇이 바뀌었는지 반환한다(목표·상태·결정·다음할일·경고 추가/삭제). 어제 넘긴 것과 오늘 넘긴 것의 차이 확인.",
   { from_code: z.string(), to_code: z.string() },
   wrap((a) => core.diff(a)));
+
+server.tool("baton_signup",
+  "무료 계정을 만든다(이메일·결제 없음). 개인 핸드오프 한도(월 20개)를 받는다. 반환된 api_key를 MCP 클라이언트 Authorization 헤더에 넣거나 baton_pass에 전달. 익명 체험(월 5개) 초과 시 여기로.",
+  { api_key: z.string().optional().describe("직접 정할 키(12자+). 없으면 자동 생성") },
+  wrap((a) => core.signup(a)));
 
 server.tool("baton_account",
   "내 플랜(Free/Pro/Team)·한도·이번 달 사용량을 조회한다. api_key 없으면 Free 기준. 핸드오프 월 한도·보관기간 확인.",
@@ -189,7 +201,8 @@ if (process.env.BATON_HTTP === "1") {
   });
   // Stateless: a fresh server+transport per POST (SDK's stateless pattern).
   app.post("/mcp", rlMcp, async (req, res) => {
-    const server = buildServer();
+    const bearer = (req.headers.authorization || "").replace(/^Bearer\s+/i, "").trim() || null;
+    const server = buildServer(bearer);
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     res.on("close", () => { transport.close(); server.close(); });
     try {

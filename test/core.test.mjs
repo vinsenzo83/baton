@@ -10,6 +10,7 @@ const DB = "./data/test.db";
 rmSync(DB, { force: true }); rmSync(DB + "-wal", { force: true }); rmSync(DB + "-shm", { force: true });
 const core = makeCore(openStore(DB));
 let pass = 0; const ok = (n) => { console.log("  ✓", n); pass++; };
+core.setPlan({ api_key: "tkey", plan: "pro" });   // unlimited key for handoff tests
 
 // 1. crypto round-trip + wrong code fails
 {
@@ -53,7 +54,7 @@ let pass = 0; const ok = (n) => { console.log("  ✓", n); pass++; };
 
 // 5. handoff: pass → receive, encrypted, unverified badge by default
 {
-  const r = core.pass({ snapshot: {
+  const r = core.pass({ api_key: "tkey", snapshot: {
     meta: { title: "결제 리팩터링", author: "boss", source_model: "claude-code", project: "bongee" },
     context: { goal: "3사 결제 통합", current_state: "2단계까지", decisions: [{ what: "선구매 모델", why: "정산 부담 0" }] },
     next_steps: ["adapter 연동", "E2E 발행 테스트"],
@@ -69,7 +70,7 @@ let pass = 0; const ok = (n) => { console.log("  ✓", n); pass++; };
 
 // 6. one-time handoff is atomically single-use (H4)
 {
-  const r = core.pass({ one_time: true, snapshot: { context: { goal: "one shot" } } });
+  const r = core.pass({ api_key: "tkey", one_time: true, snapshot: { context: { goal: "one shot" } } });
   const first = core.receive({ code: r.code });
   assert.ok(first.meta);
   assert.throws(() => core.receive({ code: r.code }), /consumed/);
@@ -101,7 +102,7 @@ let pass = 0; const ok = (n) => { console.log("  ✓", n); pass++; };
   const { manifest } = gateVerdict({ target: "x",
     static_checks: [{ dim: "security", passed: true, evidence: "RLS on" }],
     e2e_evidence: [{ claim: "저장됨", observed: true, detail: "rows +1" }] });
-  const r = core.pass({ snapshot: { context: { goal: "verified handoff" } }, verify_manifest: manifest });
+  const r = core.pass({ api_key: "tkey", snapshot: { context: { goal: "verified handoff" } }, verify_manifest: manifest });
   assert.equal(r.verified, true);
   const got = core.receive({ code: r.code });
   assert.match(got.badge, /VERIFIED/);
@@ -147,9 +148,9 @@ let pass = 0; const ok = (n) => { console.log("  ✓", n); pass++; };
 
 // 11. one-time snapshot can't be re-read via diff after it's consumed (HIGH-2)
 {
-  const victim = core.pass({ one_time: true, snapshot: { context: { goal: "SECRET-GOAL", current_state: "SECRET" } } });
+  const victim = core.pass({ api_key: "tkey", one_time: true, snapshot: { context: { goal: "SECRET-GOAL", current_state: "SECRET" } } });
   core.receive({ code: victim.code });                 // consume it
-  const empty = core.pass({ snapshot: { context: { goal: "x" } } });
+  const empty = core.pass({ api_key: "tkey", snapshot: { context: { goal: "x" } } });
   assert.throws(() => core.diff({ from_code: empty.code, to_code: victim.code }), /not found/);
   ok("consumed one-time snapshot is not re-readable via baton_diff");
 }
@@ -172,4 +173,17 @@ let pass = 0; const ok = (n) => { console.log("  ✓", n); pass++; };
   ok("crypto payment: invoice → settle upgrades to Pro; replay/double-settle blocked");
 }
 
-console.log(`\n🕸️  BATON: ${pass}/12 groups passed\n`);
+// 13. funnel: signup creates a free account with its own quota; anon trial is small
+{
+  const anon = core.account({});
+  assert.equal(anon.limits.snapshotsPerMonth, 5);   // anon trial cap = 5
+  const su = core.signup({});
+  assert.match(su.api_key, /^btn_/);
+  assert.equal(su.plan, "free");
+  const acc = core.account({ api_key: su.api_key });
+  assert.equal(acc.plan, "free");
+  assert.equal(acc.limits.snapshotsPerMonth, 20);   // registered Free = 20, more than anon 5
+  ok("funnel: baton_signup → free account (20/mo); anon trial capped at 5");
+}
+
+console.log(`\n🕸️  BATON: ${pass}/13 groups passed\n`);
