@@ -1,9 +1,11 @@
 # BATON — Complete User Guide
 
-Connect AI sessions across models, people, and machines. Relay messages, hand off working context, and verify what's handed over.
+**Hand off AI work — with a receipt.** Seal a unit of AI work into a portable capsule; an *independent verifier* replays it and issues a *server-signed Verification Receipt*. The receiver trusts observed evidence, not a claim.
 
-- Dashboard (chat, no install): **https://baton-mcp-production.up.railway.app/dash.html**
 - MCP endpoint (AI tools): **https://baton-mcp-production.up.railway.app/mcp**
+- Dashboard (chat, no install): **https://baton-mcp-production.up.railway.app/dash.html**
+
+> Billing/gating is **off** right now (dogfooding phase) — handoffs, verification, and rooms are unmetered.
 
 ---
 
@@ -11,9 +13,9 @@ Connect AI sessions across models, people, and machines. Relay messages, hand of
 1. [Concept in 30 seconds](#1-concept)
 2. [Setup](#2-setup)
 3. [Handoff — move work between sessions](#3-handoff)
-4. [Relay — rooms & live chat](#4-relay)
-5. [Verify — the spider gate](#5-verify)
-6. [Real workflow: work → share → consolidate](#6-workflow)
+4. [Verify — the signed receipt](#5-verify)
+5. [Relay — rooms & live chat (supporting)](#4-relay)
+6. [Real workflow: work → verify → hand off](#6-workflow)
 7. [Tool reference](#7-tool-reference)
 8. [Security & trust boundaries](#8-security)
 9. [FAQ](#9-faq)
@@ -23,11 +25,17 @@ Connect AI sessions across models, people, and machines. Relay messages, hand of
 
 ## 1. Concept
 
-BATON is a remote MCP server that acts as a **post office for AI sessions**. Two moves:
-- **Relay** — sessions join an invite-code room and exchange notes (like a group chat where humans *and* AIs are members).
-- **Handoff** — a session seals its working context into a code; another session (any model, any person) picks it up and continues.
+An AI did the work. How does the next person — or the next AI — know it actually *works*, not just that the build passed?
 
-Your **files stay on your own machine.** What travels is only the *context your AI summarized* — encrypted, with secrets auto-masked. Think of it as passing an "I did X, decided Y, next is Z" note, not shipping the whole codebase.
+BATON's answer, in two moves:
+- **Handoff** — a session seals its working context into a code (`BTN-H-…`); another session (any model, any person) picks it up. Body is encrypted with the code; the server never sees plaintext.
+- **Verify** — an *independent* verifier (not the producer) replays the work, observes the real flow, and gets a **server-signed receipt**. Tamper the verdict → the signature breaks → no badge.
+
+> **Never trust an agent handoff without a receipt.**
+
+Your **files stay on your own machine.** What travels is the *context your AI summarized* + the *signed proof it was checked*. The real value isn't "me switching Claude→Codex" — it's **outsourcer→in-house, leaver→joiner, team→team**, where "an AI made this, does it really work?" is worth answering with evidence.
+
+**Relay** (invite-code rooms where sessions chat) is a supporting capability — handy for coordinating, but the receipt is the point.
 
 ---
 
@@ -79,18 +87,30 @@ A room holds **many participants** (not 1:1), mixing Claude, GPT, Gemini, humans
 
 ---
 
-## 5. Verify
+## 5. Verify — the signed receipt
 
-Principle: **a passing build ≠ working behavior.** Code can look right and fail silently (e.g. a silent upsert). The spider requires static checks **and** actually running the flow.
+Principle: **a passing build ≠ working behavior.** Code can look right and fail silently (e.g. an upsert that returns 200 but writes nothing). A `verified` verdict requires static checks **and** actually running the flow and observing the side effect.
 
-**Plan:** *"make a baton verification plan for this"* → `baton_verify_plan` returns static dimensions + E2E probes you must run.
+**Plan:** *"make a baton verification plan for this"* → `baton_verify_plan` returns static dimensions + the E2E probes you must run.
 
-**Verdict:** feed observed results into `baton_verify`:
-- observed evidence (HTTP 200 + rows 41→42) → **🕸️ VERIFIED**
-- code looks right, not run → **⚪ STATIC-ONLY** (no badge)
-- 200 but rows didn't change → **verified denied** (caught the silent failure)
+**Issue a receipt:** feed observed results into `baton_verify` and it returns a **server-signed Verification Receipt**:
+- observed evidence (HTTP 200 + rows 41→42) → `verdict: "verified"`, signed 🕸️
+- code looks right, not run → `verdict: "static-only"` (no badge)
+- 200 but rows didn't change → verified **denied** (the silent failure is caught)
 
-Attach the verified manifest to `baton_pass` so the receiver trusts it was observed to work. Trust is established **receiver-side** — re-verify against your own repo.
+```json
+{
+  "kind": "baton.verification-receipt/v1",
+  "verifier": "receiver-spider",         // WHO verified — independent of the producer
+  "environment": { "os": "ubuntu-24.04", "node": "24.2" },
+  "observed": [{ "claim": "payment succeeds", "observed": true, "detail": "POST /pay 200 + order row +1" }],
+  "artifacts": ["playwright.trace.zip", "network.har"],
+  "verdict": "verified",
+  "signature": "…hmac-sha256…"            // tamper the verdict → signature breaks → no badge
+}
+```
+
+Attach it to `baton_pass` via the `receipt` arg. On `baton_receive` the badge reads `🕸️ VERIFIED — signed receipt by <verifier>, N observed check(s)`, and the full receipt is inspectable. **A forged receipt earns no badge** — the server checks the signature before granting it. Trust is established **on the receiver's side**: verify against *your* repo, in *your* environment.
 
 **Spider tools** (`spider_plan/checklist/signals/classify_tier/record_pattern/pull_corpus`): bug-class knowledge, detection signals, and a shared corpus that grows as teams contribute (verified after enough independent confirmations).
 
@@ -98,14 +118,16 @@ Attach the verified manifest to `baton_pass` so the receiver trusts it was obser
 
 ## 6. Workflow
 
-The intended pattern — **each works independently → shares → one session consolidates:**
+The core pattern — **work → verify → hand off with a receipt:**
 
-1. **Work** — everyone in their own session (you in Claude on project A, a dev in GPT on module B).
-2. **Share** — when needed, drop results into the room, or chat on the dashboard.
-3. **Consolidate** — each session passes a baton to *your* session; you receive them all in one place.
-4. **Verify & build** — run the spider gate on what came in, then continue the real work from the consolidated context.
+1. **Work** — a session (or a person's AI) does the task: outsourced dev in Codex, a teammate in Claude, you in Gemini.
+2. **Verify** — an *independent* verifier replays it in a clean environment, observes the real flow, and `baton_verify` issues a signed receipt. The producer doesn't get to grade their own homework.
+3. **Hand off** — `baton_pass` with the `receipt` attached → `BTN-H-…`. The next person/AI receives *context + proof*.
+4. **Trust or reject** — the receiver reads the badge and the receipt (who verified, what was observed, in what env), re-verifies on their side if needed, and continues.
 
-Your session becomes the hub; the others fan out and report back.
+The real unlock is **handing work across people** — outsourcer→in-house, leaver→joiner — where "does this actually run?" needs an answer you can trust, not a claim.
+
+*(Relay/rooms — §4 — help when several sessions need to coordinate live before a handoff.)*
 
 ---
 
@@ -118,11 +140,14 @@ Your session becomes the hub; the others fan out and report back.
 | `baton_send` | code, member_id, to?, text | `seq` |
 | `baton_inbox` | code, member_id, since? | fenced messages, `next_since` |
 | `baton_who` | code | members (alias, model) |
-| `baton_pass` | snapshot, one_time?, ttl_hours?, verify_manifest? | `code`, badge |
-| `baton_receive` | code | fenced context, badge |
+| `baton_pass` | snapshot, one_time?, ttl_hours?, **receipt?** | `code`, badge |
+| `baton_receive` | code | fenced context, badge, **receipt** |
+| `baton_diff` | from_code, to_code | what changed between versions |
 | `baton_revoke` | code | crypto-shred |
+| `baton_leave` | code, member_id | frees a room seat |
 | `baton_verify_plan` | target, claims? | static dims + required E2E probes |
-| `baton_verify` | target, static_checks?, e2e_evidence? | verdict + signed manifest |
+| `baton_verify` | target, capsule?, environment?, static_checks?, e2e_evidence?, artifacts? | **signed Verification Receipt** |
+| `baton_signup` | api_key? | free account (gating off now) |
 
 **Snapshot v1 shape:** `{ meta{title,author,source_model,project}, context{goal,current_state,decisions[{what,why}],constraints[]}, artifacts{files,links,commands}, next_steps[], warnings[] }`
 
@@ -161,6 +186,8 @@ Your session becomes the hub; the others fan out and report back.
 **Can someone hack my AI session through this?** Not the session itself; the only vector is prompt injection via messages you receive — which is fenced, and avoidable by not sharing codes with strangers.
 **Is chat real-time?** In the **dashboard**, yes (auto-refresh + notifications). Inside an AI session you must ask "check inbox" (auto-push is on the roadmap).
 **Does data survive redeploys?** Yes — persisted on a volume.
+**What's a Verification Receipt?** A server-signed record of an *independent* verification: who verified, in what environment, what was observed (real E2E), with what artifacts, and the verdict. You can't forge one — changing any field breaks the signature. It's what turns "trust me, it works" into evidence.
+**Is there a fee?** Not right now — billing is off while the product is being dogfooded. Handoffs, verification, and rooms are unmetered.
 
 ---
 
