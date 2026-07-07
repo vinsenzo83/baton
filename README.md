@@ -1,34 +1,73 @@
 # 🏃 BATON
 
-**Pass the session.**
+**Hand off AI work — with a receipt.**
 
-Connect any AI session to any other — across models (Claude · GPT · Gemini …), machines, and people — with one code. **Relay** messages between live sessions, **hand off** a whole working context, and let the **spider** verify that what's handed over actually works — static checks *and* real E2E.
+An AI did the work. How does the next person — or the next AI — know it actually *works*, not just that the build passed? BATON seals a unit of AI work into a portable capsule, and an **independent verifier** replays it and issues a **server-signed Verification Receipt**. The receiver trusts observed evidence, not a claim.
 
-BATON is a standard MCP (Model Context Protocol) server, so any MCP-capable tool (Claude Code, Codex CLI, Gemini CLI, Cursor …) connects with a single URL.
+> **Never trust an agent handoff without a receipt.**
 
-## Three capabilities
+BATON is a standard MCP (Model Context Protocol) server — any MCP-capable tool (Claude Code, Codex CLI, Gemini CLI, Cursor …) connects with one URL. The producer and the verifier can be **different models, machines, and people**.
 
-| | Tools | What it does |
+## Why this, and not the dozen orchestration tools?
+
+Running Claude + Codex + Gemini together (swarms, rooms, agent messaging) is a crowded space. BATON isn't that. The one thing almost nobody does: **bind the handoff artifact to independent execution evidence as a single, forgeable-proof trust unit.** That's the receipt.
+
+```
+Claude did the work
+   ↓  baton_pass  → sealed capsule (BTN-H-…)
+Codex / a teammate receives it
+   ↓  baton_verify → replay in a clean env, observe the real flow
+   ↓
+🕸️ VERIFIED — signed receipt: who verified · what was observed · in what env · with what artifacts
+   ↓
+trust  (or reject)
+```
+
+The real buyer isn't "me switching Claude→Codex" (just re-read the repo). It's **outsourcer→in-house, leaver→joiner, KO team→US team** — where "an AI made this, does it *really* work?" is a question worth paying to answer.
+
+## The receipt (the differentiator)
+
+`baton_verify` doesn't return a `✅` sticker. It returns a signed record:
+
+```json
+{
+  "kind": "baton.verification-receipt/v1",
+  "capsule": "BTN-H-…",              // the handoff this verifies
+  "verifier": "receiver-spider",    // WHO verified — independent of the producer
+  "environment": { "os": "ubuntu-24.04", "node": "24.2" },
+  "observed": [{ "claim": "payment succeeds", "observed": true,
+                 "detail": "POST /pay 200 + order row +1" }],
+  "artifacts": ["playwright.trace.zip", "network.har"],
+  "verdict": "verified",
+  "signature": "…hmac-sha256…"       // server-signed → tamper the verdict, break the sig
+}
+```
+
+Flip `verdict` to `"verified"` without re-signing and the badge is refused. A passing build never earns `verified` on its own — only **observed** E2E does (this is what catches a silent upsert that returns 200 but writes nothing).
+
+## Tools
+
+| Group | Tools | What it does |
 |---|---|---|
-| **Relay** | `baton_create_room` `baton_join` `baton_send` `baton_inbox` `baton_who` | Sessions from different people/machines/models talk in an invite-code room (`BTN-R-…`) |
-| **Handoff** | `baton_pass` `baton_receive` `baton_revoke` | Seal a session snapshot into a code (`BTN-H-…`) and hand it over. Body is encrypted with a code-derived key |
-| **Verify (spider)** | `baton_verify_plan` `baton_verify` + `spider_*` ×6 | Judge a handoff with static checks **and observed E2E**. No observation, no 🕸️ badge |
+| **Handoff** | `baton_pass` `baton_receive` `baton_diff` `baton_revoke` | Seal a work capsule into a code (`BTN-H-…`), hand it over, diff versions. Body encrypted with a code-derived key — the server never sees plaintext |
+| **Verify** | `baton_verify` `baton_verify_plan` + `spider_*` ×6 | Independent verifier replays and issues the signed receipt. No observation, no 🕸️ |
+| **Relay** *(supporting)* | `baton_create_room` `baton_join` `baton_send` `baton_inbox` `baton_who` `baton_leave` | Live sessions from different people/models talk in an invite-code room (`BTN-R-…`) |
 
-## Design principles (from the architecture review)
+## Design principles (from the security review)
 
-- **C1 — Prompt-injection containment.** Inbound messages/snapshots are returned fenced as *untrusted data*; the receiving agent is told not to execute instructions inside them.
-- **C2 — Codes are ≥128-bit secrets.** Not 4 digits. Resistant to horizontal brute force.
-- **C4 — Code-derived encryption.** The server stores only `ciphertext + code_hash`. Without the code, even the operator can't read the plaintext — the proof of "we can't lock you in." Plus automatic secret masking.
-- **H3** alias-spoofing blocked · **H4** one-time codes redeemed atomically.
-- **The hard-won lesson — *a passing build ≠ working behavior.*** A `verified` verdict cannot be earned by static analysis alone. It requires evidence from actually running the flow and observing the side effect (HTTP status, DB row delta). This is the only way to catch a silent upsert failure.
+- **Code-derived encryption.** The server stores only `ciphertext + code_hash`. Without the code, even the operator can't read the plaintext — the proof of "we can't lock you in."
+- **Signed receipts.** Verdicts are HMAC-signed server-side (`BATON_RECEIPT_SECRET`); no client can forge `verified`.
+- **Prompt-injection containment.** Inbound capsules/messages are returned fenced as *untrusted data*; secrets are auto-masked before storage.
+- **Codes are ≥128-bit secrets**, one-time codes redeem atomically, alias-spoofing blocked.
+- **A passing build ≠ working behavior.** `verified` requires observed side effects, never static analysis alone.
 
 ## Run
 
 ```bash
 npm install
-npm test                                     # 8/8 E2E groups pass
-node src/server.js                           # stdio (local / any CLI)
-BATON_HTTP=1 PORT=8080 node src/server.js     # remote Streamable HTTP
+npm test                                      # 15/15 E2E groups pass
+node src/server.js                            # stdio (local / any CLI)
+BATON_HTTP=1 PORT=8080 node src/server.js      # remote Streamable HTTP
 ```
 
 ### Register (remote)
@@ -36,18 +75,10 @@ BATON_HTTP=1 PORT=8080 node src/server.js     # remote Streamable HTTP
 claude mcp add --transport http baton https://baton-mcp-production.up.railway.app/mcp
 ```
 
-See **[USAGE.md](USAGE.md)** for the full end-user guide.
+Billing/gating is **off by default** (dogfooding phase). Set `BATON_BILLING=on` to re-enable quotas/seats. See **[USAGE.md](USAGE.md)** for the full guide.
 
 ## Storage
-
-MVP uses SQLite (`better-sqlite3`) — ships as-is for the self-host single binary. The hosted service drops a Postgres adapter into the narrow interface in `src/store.js` (multi-tenant durability, PITR). With a stateless HTTP server, connect through a Postgres pooler (transaction mode).
-
-## Roadmap
-- **M1 (now)** — relay + handoff + spider verify + code-derived encryption. Dogfooded on real handoffs.
-- **M2** — web dashboard, shared corpus network, Postgres.
-- **M3** — org/SSO, snapshot versioning & diff.
-
-The spider engine is an absorbed `recluse-mcp` — no longer a separate server, but BATON's verification engine.
+MVP uses SQLite (`better-sqlite3`) — self-host single binary. The hosted service drops a Postgres adapter into the narrow interface in `src/store.js`.
 
 ## License
 MIT

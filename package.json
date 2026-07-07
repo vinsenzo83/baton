@@ -1,7 +1,7 @@
 {
   "name": "baton-mcp",
   "version": "0.1.0",
-  "description": "BATON — cross-model, cross-person AI session relay & handoff over MCP",
+  "description": "BATON — hand off AI work with a signed verification receipt (independent E2E-proven), over MCP",
   "main": "src/server.js",
   "directories": {
     "doc": "docs"
