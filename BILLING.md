@@ -32,5 +32,13 @@ Enforced in `src/plans.js` + `core.pass()` (monthly quota) and reported by `bato
    On cancellation, send `"plan": "free"`.
 5. **Set env** — `BATON_WEBHOOK_SECRET` on Railway (without it the webhook rejects all calls).
 
+## Known limitation — anonymous metering (decide at payment time)
+MCP tool calls don't carry a client IP, so anonymous (no api_key) handoffs share one global
+Free bucket. Rotating random api_keys can't bypass the limit (unregistered keys are treated as
+anonymous — fixed), but a heavy anonymous user can exhaust the shared bucket for others. This is
+harmless pre-payment. At payment launch, resolve it by **requiring a free key (signup) to keep
+using handoffs** — anonymous gets a small trial, registered accounts get their own metered bucket,
+Pro/Team unlimited. IP-based anon metering is only possible on the REST path, not MCP tools.
+
 ## Note
 The webhook is disabled until `BATON_WEBHOOK_SECRET` is set — safe by default. Pricing, tax, and terms are business/legal decisions, not code.

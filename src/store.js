@@ -144,7 +144,8 @@ export function openStore(path = "./data/baton.db") {
     // M3-4: read a snapshot body by code WITHOUT consuming it (for diff). Returns null if gone.
     peekSnapshot(code) {
       const row = db.prepare(`SELECT * FROM snapshots WHERE code_hash=?`).get(codeHash(code));
-      if (!alive(row)) return null;
+      // HIGH-2: a consumed one-time snapshot must not be re-readable via diff/peek either.
+      if (!alive(row) || row.consumed) return null;
       return { meta: { title: row.title, project: row.project }, version: row.version || 1,
         body: JSON.parse(openBody(code, row)) };
     },

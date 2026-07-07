@@ -143,4 +143,13 @@ let pass = 0; const ok = (n) => { console.log("  ✓", n); pass++; };
   ok("billing: plan resolution, usage metering, unlimited Pro");
 }
 
-console.log(`\n🕸️  BATON: ${pass}/10 groups passed\n`);
+// 11. one-time snapshot can't be re-read via diff after it's consumed (HIGH-2)
+{
+  const victim = core.pass({ one_time: true, snapshot: { context: { goal: "SECRET-GOAL", current_state: "SECRET" } } });
+  core.receive({ code: victim.code });                 // consume it
+  const empty = core.pass({ snapshot: { context: { goal: "x" } } });
+  assert.throws(() => core.diff({ from_code: empty.code, to_code: victim.code }), /not found/);
+  ok("consumed one-time snapshot is not re-readable via baton_diff");
+}
+
+console.log(`\n🕸️  BATON: ${pass}/11 groups passed\n`);
