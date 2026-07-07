@@ -227,7 +227,7 @@ export function makeCore(store) {
     // ---------- HANDOFF ----------
     // The client model fills `snapshot` in the BATON Snapshot v1 shape. We scrub secrets,
     // seal under a fresh code, and (optionally) attach a verification manifest.
-    pass({ snapshot, one_time = false, ttl_hours = 72, verify = null, verify_manifest = null, receipt = null, parent_code = null, api_key = null } = {}) {
+    pass({ snapshot, one_time = false, ttl_hours = 72, verify = null, verify_manifest = null, receipt = null, parent_code = null, api_key = null, room = null, member_id = null } = {}) {
       if (!snapshot || !snapshot.context) throw new Error("snapshot.context is required (BATON Snapshot v1).");
       // M3-3: enforce the monthly snapshot quota (Free = 20/mo). Pro/Team are unlimited.
       const a = acct(api_key);
@@ -287,13 +287,31 @@ export function makeCore(store) {
       });
       // M3-3: meter the handoff against the monthly counter.
       store.bumpUsage(a.keyHash || codeHash("anon:free"), "snapshots", period);
+      const badge = manifest?.badge || (verified ? "🕸️ VERIFIED" : "⚪ UNVERIFIED (attach `verify` evidence or a receipt)");
+      // Auto-deliver: if a room + member_id are given, drop the code into that room so the
+      // receiving session sees it in baton_inbox — no human copies the code around (dogfood fix).
+      let delivered_to = null;
+      if (room && member_id) {
+        try {
+          const rcode = normalizeCode(room);
+          const rr = store.getRoom(rcode);
+          const me = rr && store.members(rr.code_hash).find((x) => x.id === member_id);
+          if (rr && me) {
+            store.send(rcode, rr.code_hash, member_id, me.alias, null,
+              `🏃 New baton: ${code}  ${badge} — receive with baton_receive`);
+            delivered_to = room;
+          }
+        } catch { /* room delivery is best-effort; the code is still returned below */ }
+      }
       return {
         code, one_time, expires_in_hours: ttl_hours, secrets_redacted: redactions, version,
-        verified: !!verified,
-        badge: manifest?.badge || (verified ? "🕸️ VERIFIED" : "⚪ UNVERIFIED (attach `verify` evidence or a receipt)"),
+        verified: !!verified, badge,
         verify_reason: manifest?.reason,      // WHY (e.g. why it's only static-only)
         tier: manifest?.tier,                 // self-attested | independent
-        share: `The receiver picks it up with baton_receive: ${code}`,
+        delivered_to,                         // room the code was auto-sent to (if any)
+        share: delivered_to
+          ? `Auto-sent to room ${room} — the receiver finds it in baton_inbox (no copy-paste).`
+          : `The receiver picks it up with baton_receive: ${code}`,
       };
     },
 

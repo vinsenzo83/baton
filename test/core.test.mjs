@@ -256,4 +256,20 @@ core.setPlan({ api_key: "tkey", plan: "pro" });   // unlimited key for handoff t
   ok("one-step: self-attested→🔏SEALED, independent→🕸️VERIFIED; downgrade reason surfaced");
 }
 
-console.log(`\n🕸️  BATON: ${pass}/16 groups passed\n`);
+// 17. auto-delivery: pass with a room drops the code into the room (no human copy-paste)
+{
+  const { code: rcode } = core.createRoom({ name: "handoff-lane" });
+  const sender = core.join({ code: rcode, alias: "lead", model: "claude" });
+  const receiver = core.join({ code: rcode, alias: "codex", model: "codex" });
+  const p = core.pass({ api_key: "tkey", room: rcode, member_id: sender.member_id,
+    snapshot: { context: { goal: "auto-delivered handoff" } } });
+  assert.equal(p.delivered_to, rcode);                  // reported as auto-sent
+  // the receiver sees the handoff code in their inbox — without anyone pasting it
+  const inbox = core.inbox({ code: rcode, member_id: receiver.member_id });
+  assert.equal(inbox.count, 1);
+  assert.match(inbox.messages_fenced, new RegExp(p.code.slice(0, 12)));  // the BTN-H code arrived
+  assert.match(inbox.messages_fenced, /New baton/);
+  ok("auto-delivery: pass(room) drops the handoff code into the room inbox — no copy-paste");
+}
+
+console.log(`\n🕸️  BATON: ${pass}/17 groups passed\n`);

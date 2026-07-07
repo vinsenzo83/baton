@@ -88,6 +88,8 @@ server.tool("baton_pass",
     verify_manifest: z.any().optional().describe("(레거시) 원시 증거 매니페스트 — 서버가 재계산"),
     parent_code: z.string().optional().describe("이 핸드오프가 갱신하는 이전 핸드오프 코드 — 버전 체인 연결(baton_diff용)"),
     api_key: z.string().optional().describe("발급받은 API 키(없으면 Free 플랜 월 20개 한도)"),
+    room: z.string().optional().describe("방 코드(BTN-R-…). 주면 핸드오프 코드를 이 방에 자동 전송 — 받는 세션은 baton_inbox에서 바로 확인(코드 복붙 불필요)"),
+    member_id: z.string().optional().describe("room에 입장한 내 member_id(자동 전송 발신자)"),
   },
   wrap((a) => core.pass(a)));
 
