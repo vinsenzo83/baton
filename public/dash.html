@@ -195,7 +195,7 @@ async function doSend() {
 
 function leave() { clearInterval(poll); localStorage.removeItem("baton"); location.reload(); }
 function copyCode() { navigator.clipboard.writeText(S.code); }
-function esc(s) { return String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
 function time(t) { const d = new Date(t); return d.toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" }); }
 
 $("enter").dataset.mode = "join";

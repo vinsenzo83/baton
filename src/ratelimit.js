@@ -4,7 +4,9 @@ const buckets = new Map(); // key -> { count, resetAt }
 
 export function rateLimit({ windowMs = 60_000, max = 60, key = "ip" } = {}) {
   return (req, res, next) => {
-    const ip = (req.headers["x-forwarded-for"] || "").split(",")[0].trim() || req.socket?.remoteAddress || "unknown";
+    // H2: with `trust proxy` set to the real hop count, req.ip is the proxy-attributed
+    // client address and can't be spoofed by a caller-supplied X-Forwarded-For.
+    const ip = req.ip || req.socket?.remoteAddress || "unknown";
     const k = `${key}:${ip}:${req.path}`;
     const now = Date.now();
     let b = buckets.get(k);
@@ -31,6 +33,7 @@ export function startSweeper(intervalMs = 300_000) {
 }
 
 // Client IP helper for contributor de-duplication (verified-forgery defense).
+// Uses req.ip (proxy-attributed via `trust proxy`) — not the raw caller-supplied header.
 export function clientIp(req) {
-  return (req.headers["x-forwarded-for"] || "").split(",")[0].trim() || req.socket?.remoteAddress || "unknown";
+  return req.ip || req.socket?.remoteAddress || "unknown";
 }

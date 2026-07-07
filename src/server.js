@@ -104,7 +104,9 @@ if (process.env.BATON_HTTP === "1") {
   const { codeHash } = await import("./crypto.js");
   startSweeper();
   const app = express();
-  app.set("trust proxy", true);
+  // H2: trust exactly the Railway edge proxy (1 hop). NOT `true` — that would let a caller
+  // forge X-Forwarded-For and fake IP diversity for the verified-badge check.
+  app.set("trust proxy", 1);
   app.use(express.json({ limit: "256kb" }));  // tighter cap — DoS surface
   app.get("/health", (_q, r) => r.json({ ok: true, name: "baton", version: "0.1.0" }));
   // Rate limits: writes are cheap to abuse, so cap them per-IP. Reads a bit looser.

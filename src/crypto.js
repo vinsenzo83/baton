@@ -40,6 +40,20 @@ export function openBody(code, sealed) {
   return pt.toString("utf8");
 }
 
+// Seal/open with an ALREADY-DERIVED key — lets a room derive its key once and reuse it
+// across many messages, instead of running scrypt per message (DoS fix). iv is per-message.
+export function sealWithKey(key, plaintext) {
+  const iv = randomBytes(12);
+  const cipher = createCipheriv("aes-256-gcm", key, iv);
+  const ct = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
+  return { iv: iv.toString("base64"), tag: cipher.getAuthTag().toString("base64"), ct: ct.toString("base64") };
+}
+export function openWithKey(key, sealed) {
+  const decipher = createDecipheriv("aes-256-gcm", key, Buffer.from(sealed.iv, "base64"));
+  decipher.setAuthTag(Buffer.from(sealed.tag, "base64"));
+  return Buffer.concat([decipher.update(Buffer.from(sealed.ct, "base64")), decipher.final()]).toString("utf8");
+}
+
 // Constant-time hash compare for code_hash lookups.
 export function hashEquals(a, b) {
   const ba = Buffer.from(a, "hex");

@@ -4,7 +4,7 @@
 import Database from "better-sqlite3";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { sealBody, openBody, codeHash } from "./crypto.js";
+import { sealBody, openBody, codeHash, deriveKey, sealWithKey, openWithKey } from "./crypto.js";
 import { participantId } from "./ids.js";
 
 export function openStore(path = "./data/baton.db") {
@@ -83,23 +83,30 @@ export function openStore(path = "./data/baton.db") {
     },
 
     // ---- messages ----
+    // DoS fix: derive the room key ONCE per call from the room salt, reuse across messages
+    // (aes-gcm with a per-message iv) instead of running scrypt per message.
     send(code, roomHash, fromId, fromAlias, toAlias, text) {
+      const room = db.prepare(`SELECT salt FROM rooms WHERE code_hash=?`).get(roomHash);
+      const key = deriveKey(code, Buffer.from(room.salt, "base64"));
       const seqRow = db.prepare(`SELECT COALESCE(MAX(seq),0)+1 AS n FROM messages WHERE room_hash=?`).get(roomHash);
-      const s = sealBody(code, text);
+      const s = sealWithKey(key, text);
       db.prepare(`INSERT INTO messages(room_hash,seq,from_id,from_alias,to_alias,salt,iv,tag,ct,created_at)
                   VALUES(?,?,?,?,?,?,?,?,?,?)`).run(
-        roomHash, seqRow.n, fromId, fromAlias, toAlias || null, s.salt, s.iv, s.tag, s.ct, now());
+        roomHash, seqRow.n, fromId, fromAlias, toAlias || null, null, s.iv, s.tag, s.ct, now());
       db.prepare(`UPDATE members SET last_seen=? WHERE id=?`).run(now(), fromId);
       return seqRow.n;
     },
-    inbox(code, roomHash, myAlias, sinceSeq = 0) {
+    inbox(code, roomHash, myAlias, sinceSeq = 0, limit = 200) {
+      const room = db.prepare(`SELECT salt FROM rooms WHERE code_hash=?`).get(roomHash);
+      const key = deriveKey(code, Buffer.from(room.salt, "base64"));   // one derivation for all rows
       const rows = db.prepare(
         `SELECT seq,from_alias,to_alias,salt,iv,tag,ct,created_at FROM messages
          WHERE room_hash=? AND seq>? AND (to_alias IS NULL OR lower(to_alias)=lower(?))
-         ORDER BY seq`).all(roomHash, sinceSeq, myAlias);
+         ORDER BY seq LIMIT ?`).all(roomHash, sinceSeq, myAlias, Math.min(limit, 500));
       return rows.map((m) => ({
         seq: m.seq, from: m.from_alias, to: m.to_alias, at: m.created_at,
-        text: openBody(code, m),
+        // rows with a legacy per-message salt fall back to per-message derivation
+        text: m.salt ? openBody(code, m) : openWithKey(key, m),
       }));
     },
 
@@ -135,9 +142,15 @@ export function openStore(path = "./data/baton.db") {
     },
     revoke(code) {
       const h = codeHash(code);
-      const a = db.prepare(`DELETE FROM snapshots WHERE code_hash=?`).run(h).changes;
-      const b = db.prepare(`DELETE FROM rooms WHERE code_hash=?`).run(h).changes;
-      return a + b > 0;
+      // L1: actually shred everything under this code — messages/members too, not just the room row.
+      const tx = db.transaction(() => {
+        const a = db.prepare(`DELETE FROM snapshots WHERE code_hash=?`).run(h).changes;
+        const b = db.prepare(`DELETE FROM rooms WHERE code_hash=?`).run(h).changes;
+        db.prepare(`DELETE FROM messages WHERE room_hash=?`).run(h);
+        db.prepare(`DELETE FROM members WHERE room_hash=?`).run(h);
+        return a + b > 0;
+      });
+      return tx();
     },
 
     // ---- shared spider corpus (M2-2) ----

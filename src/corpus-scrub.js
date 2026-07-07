@@ -4,7 +4,7 @@
 import { createHash } from 'node:crypto';
 
 // 고엔트로피(시크릿 추정) 토큰: 길고 무작위한 영숫자/base64/hex
-const HIGH_ENTROPY = /\b[A-Za-z0-9_\-]{24,}\b/g;
+const HIGH_ENTROPY = /[A-Za-z0-9_+/=\-]{24,}/g;   // include +/= so raw base64 secrets are caught (L3)
 const HEX_LONG = /\b[0-9a-f]{16,}\b/gi;
 const JWT = /\beyJ[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+/g;
 const KEY_PREFIXED = /\b(sk|pk|rk|whsec|xox[baprs]|ghp|gho|AKIA|AIza|SG\.)[_\-A-Za-z0-9]{8,}/gi;
@@ -30,10 +30,10 @@ export function scrubText(input) {
 }
 
 // 스크럽 후에도 시크릿 잔존 의심 → 거부.
-const STILL_SUSPICIOUS = [/password\s*[:=]\s*\S+/i, /secret\s*[:=]\s*\S+/i, /\b[A-Za-z0-9+/]{40,}={0,2}\b/];
+const STILL_SUSPICIOUS = [/password\s*[:=]\s*\S+/i, /secret\s*[:=]\s*\S+/i, /token\s*[:=]\s*\S+/i, /\b[A-Za-z0-9+/]{24,}={0,2}\b/];
 /** 안전성 판정: 일반화 기법으로 보이면 ok, 시크릿/원시코드 냄새면 reject. */
-export function isSafe(scrubbed) {
-  if (scrubbed.length < 8) return { ok: false, reason: 'too short after scrub' };
+export function isSafe(scrubbed, { minLen = 8 } = {}) {
+  if (scrubbed.length < minLen) return { ok: false, reason: 'too short after scrub' };
   if (STILL_SUSPICIOUS.some((re) => re.test(scrubbed))) return { ok: false, reason: 'possible secret remains' };
   // ⟨literal⟩ 자리표시자가 과도하면(원문이 코드 덩어리) 거부
   const ph = (scrubbed.match(/⟨\w+⟩/g) || []).length;
@@ -67,8 +67,9 @@ export function preparePattern(raw, { contributorToken, projectId, salt } = {}) 
   const signal = scrubText(raw.signal);
   const fix = scrubText(raw.fix);
   if (!klass || !name || !signal || !fix) return { ok: false, reason: 'missing fields after scrub' };
-  for (const [k, v] of [['signal', signal], ['fix', fix]]) {
-    const safe = isSafe(v);
+  // L3: gate ALL free-text fields (name/klass too, not just signal/fix) for residual secrets.
+  for (const [k, v, minLen] of [['klass', klass, 2], ['name', name, 2], ['signal', signal, 8], ['fix', fix, 8]]) {
+    const safe = isSafe(v, { minLen });
     if (!safe.ok) return { ok: false, reason: `${k}: ${safe.reason}` };
   }
   const tags = Array.isArray(raw.tags)

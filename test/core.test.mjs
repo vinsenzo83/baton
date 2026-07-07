@@ -23,7 +23,7 @@ let pass = 0; const ok = (n) => { console.log("  ✓", n); pass++; };
 {
   const { code } = core.createRoom({ name: "bongee-cmi", ttl_hours: 1 });
   assert.match(code, /^BTN-R-[0-9A-Z-]+$/);
-  const boss = core.join({ code, alias: "boss", model: "claude-code" });
+  const boss = core.join({ code, alias: "owner", model: "claude-code" });
   const dev = core.join({ code, alias: "dev", model: "codex" });
   core.send({ code, member_id: boss.member_id, to: "dev", text: "이 스키마 검토해줘" });
   const got = core.inbox({ code, member_id: dev.member_id });
