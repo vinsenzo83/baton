@@ -162,7 +162,7 @@ let pass = 0; const ok = (n) => { console.log("  ✓", n); pass++; };
   const inv = c2.upgrade({ plan: "pro", api_key: "pay-key-1" });
   assert.match(inv.invoice_id, /^inv_/);
   assert.equal(inv.amount_usd, 8);
-  assert.ok(inv.wallets.tron && inv.wallets.bsc);
+  assert.ok("pay_options" in inv);   // wallet addresses only present when env is set
   // settle directly (on-chain verify is exercised separately) — tests store atomicity + upgrade + replay
   const r1 = st.settleInvoice(inv.invoice_id, { chain: "tron", txHash: "0xTX1", plan: "pro", keyHash: codeHash("pay-key-1") });
   assert.ok(r1.ok);

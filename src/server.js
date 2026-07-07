@@ -90,8 +90,8 @@ server.tool("baton_upgrade",
   wrap((a) => core.upgrade(a)));
 
 server.tool("baton_confirm_payment",
-  "송금한 tx 해시를 온체인 검증해 플랜을 업그레이드한다. invoice_id·chain(tron|bsc)·api_key·tx_hash 제출. 검증 통과 시 Pro/Team 적용.",
-  { invoice_id: z.string(), chain: z.enum(["tron", "bsc"]), api_key: z.string(), tx_hash: z.string() },
+  "송금한 tx 해시를 온체인 검증해 플랜을 업그레이드한다. invoice_id·token(USDT|USDC)·chain(tron|bsc)·api_key·tx_hash 제출. 보낸 토큰·네트워크 조합이 정확해야 검증 통과.",
+  { invoice_id: z.string(), token: z.enum(["USDT", "USDC"]), chain: z.enum(["tron", "bsc"]), api_key: z.string(), tx_hash: z.string() },
   wrap((a) => core.confirmPayment(a)));
 
 server.tool("baton_receive",
