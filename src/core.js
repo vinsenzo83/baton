@@ -8,6 +8,8 @@ import { roomCode, handoffCode, normalizeCode } from "./ids.js";
 import { fenceUntrusted, injectionFlags, scrubSecrets } from "./prompt-guard.js";
 import { sealBody } from "./crypto.js";
 import { gateVerdict } from "./verify.js";
+import { planOf, monthKey } from "./plans.js";
+import { codeHash } from "./crypto.js";
 
 const HOUR = 3600_000;
 const RESERVED = /(spider|거미|baton|system|시스템|보스|boss|admin|관리자|운영|보안)/i;
@@ -40,7 +42,38 @@ function sanitizeTtl(t) {
 }
 
 export function makeCore(store) {
+  // Resolve the caller's plan from an API key (anonymous → free).
+  const acct = (apiKey) => {
+    if (!apiKey) return { keyHash: null, plan: "free", limits: planOf("free").limits };
+    const keyHash = codeHash(apiKey);
+    const a = store.getAccount(keyHash);
+    const plan = a?.plan || "free";
+    return { keyHash, plan, org: a?.org || null, limits: planOf(plan).limits };
+  };
+
   return {
+    // ---------- ACCOUNT / BILLING (M3-3) ----------
+    // View plan, limits, and current usage. Anonymous callers are Free.
+    account({ api_key } = {}) {
+      const a = acct(api_key);
+      const period = monthKey(Date.now());
+      const used = a.keyHash ? store.getUsage(a.keyHash, "snapshots", period) : 0;
+      const cap = a.limits.snapshotsPerMonth;
+      return {
+        plan: a.plan, org: a.org || undefined,
+        limits: { ...a.limits, snapshotsPerMonth: cap === Infinity ? "unlimited" : cap,
+          activeRooms: a.limits.activeRooms === Infinity ? "unlimited" : a.limits.activeRooms },
+        usage: { snapshots_this_month: used, remaining: cap === Infinity ? "unlimited" : Math.max(0, cap - used) },
+        upgrade: a.plan === "free" ? "Pro $8/mo · Team $25/mo — contact to upgrade" : undefined,
+      };
+    },
+    // Set a plan for an API key (called by the payment webhook after a successful charge).
+    setPlan({ api_key, plan, org } = {}) {
+      if (!api_key) throw new Error("api_key is required.");
+      if (!planOf(plan) || !["free", "pro", "team"].includes(plan)) throw new Error("Unknown plan.");
+      store.upsertAccount(codeHash(api_key), { plan, org });
+      return { ok: true, plan };
+    },
     // ---------- RELAY ----------
     createRoom({ name, ttl_hours = 72, alias } = {}) {
       ttl_hours = sanitizeTtl(ttl_hours);           // L2: reject non-numeric ttl (no永구방)
@@ -115,8 +148,19 @@ export function makeCore(store) {
     // ---------- HANDOFF ----------
     // The client model fills `snapshot` in the BATON Snapshot v1 shape. We scrub secrets,
     // seal under a fresh code, and (optionally) attach a verification manifest.
-    pass({ snapshot, one_time = false, ttl_hours = 72, verify_manifest = null, parent_code = null } = {}) {
+    pass({ snapshot, one_time = false, ttl_hours = 72, verify_manifest = null, parent_code = null, api_key = null } = {}) {
       if (!snapshot || !snapshot.context) throw new Error("snapshot.context is required (BATON Snapshot v1).");
+      // M3-3: enforce the monthly snapshot quota (Free = 20/mo). Pro/Team are unlimited.
+      const a = acct(api_key);
+      const period = monthKey(Date.now());
+      if (a.limits.snapshotsPerMonth !== Infinity) {
+        const key = a.keyHash || codeHash("anon:free");
+        const used = store.getUsage(key, "snapshots", period);
+        if (used >= a.limits.snapshotsPerMonth)
+          throw new Error(`Free plan limit reached (${a.limits.snapshotsPerMonth} handoffs/month). Upgrade to Pro for unlimited.`);
+      }
+      // Free plan retention caps ttl.
+      if (a.plan === "free") ttl_hours = Math.min(ttl_hours, a.limits.retentionDays * 24);
       const raw = JSON.stringify(snapshot);
       const { text: clean, redactions } = scrubSecrets(raw);
       const code = handoffCode();
@@ -144,6 +188,8 @@ export function makeCore(store) {
         oneTime: one_time, ttlMs: ttl_hours * HOUR, verified, manifest,
         parentCode: parent_code ? normalizeCode(parent_code) : null,
       });
+      // M3-3: meter the handoff against the monthly counter.
+      store.bumpUsage(a.keyHash || codeHash("anon:free"), "snapshots", period);
       return {
         code, one_time, expires_in_hours: ttl_hours, secrets_redacted: redactions, version,
         verified: !!verified,

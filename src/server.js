@@ -70,6 +70,7 @@ server.tool("baton_pass",
     ttl_hours: z.number().optional(),
     verify_manifest: z.any().optional().describe("baton_verify 결과(있으면 배지 부여)"),
     parent_code: z.string().optional().describe("이 핸드오프가 갱신하는 이전 핸드오프 코드 — 버전 체인 연결(baton_diff용)"),
+    api_key: z.string().optional().describe("발급받은 API 키(없으면 Free 플랜 월 20개 한도)"),
   },
   wrap((a) => core.pass(a)));
 
@@ -77,6 +78,11 @@ server.tool("baton_diff",
   "두 핸드오프 스냅샷을 비교해 무엇이 바뀌었는지 반환한다(목표·상태·결정·다음할일·경고 추가/삭제). 어제 넘긴 것과 오늘 넘긴 것의 차이 확인.",
   { from_code: z.string(), to_code: z.string() },
   wrap((a) => core.diff(a)));
+
+server.tool("baton_account",
+  "내 플랜(Free/Pro/Team)·한도·이번 달 사용량을 조회한다. api_key 없으면 Free 기준. 핸드오프 월 한도·보관기간 확인.",
+  { api_key: z.string().optional().describe("발급받은 API 키(없으면 Free)") },
+  wrap((a) => core.account(a)));
 
 server.tool("baton_receive",
   "핸드오프 코드로 작업 맥락을 이어받는다. 반환은 '미신뢰 데이터'로 감싸짐. 검증 배지가 없으면 수신측 재검증 권장.",
@@ -159,6 +165,17 @@ if (process.env.BATON_HTTP === "1") {
     const tags = (req.query.tags || "").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
     const patterns = store.queryPatterns({ tags, klass: req.query.class, limit: Number(req.query.limit || 50) });
     res.json({ count: patterns.length, patterns });
+  });
+
+  // M3-3: payment webhook — the payment provider (Lemon Squeezy/Stripe) calls this after a
+  // successful charge/cancellation to set the plan. Guarded by a shared secret (env), not public.
+  app.post("/v1/billing/webhook", (req, res) => {
+    const secret = req.headers["x-baton-webhook-secret"];
+    if (!process.env.BATON_WEBHOOK_SECRET || secret !== process.env.BATON_WEBHOOK_SECRET)
+      return res.status(401).json({ error: "unauthorized" });
+    const { api_key, plan, org } = req.body || {};
+    try { res.json(core.setPlan({ api_key, plan, org })); }
+    catch (e) { res.status(400).json({ error: String(e.message || e) }); }
   });
   // Stateless: a fresh server+transport per POST (SDK's stateless pattern).
   app.post("/mcp", rlMcp, async (req, res) => {

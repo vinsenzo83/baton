@@ -125,4 +125,22 @@ let pass = 0; const ok = (n) => { console.log("  ✓", n); pass++; };
   ok("snapshot versioning (v1→v2) + diff shows goal/decision/step changes");
 }
 
-console.log(`\n🕸️  BATON: ${pass}/9 groups passed\n`);
+// 10. billing: Free plan meters + gates handoffs; account view reports usage (M3-3)
+{
+  const acctView = core.account({});
+  assert.equal(acctView.plan, "free");
+  assert.equal(acctView.limits.snapshotsPerMonth, 20);
+  // a Pro key is unlimited
+  core.setPlan({ api_key: "k-pro", plan: "pro" });
+  const pro = core.account({ api_key: "k-pro" });
+  assert.equal(pro.plan, "pro");
+  assert.equal(pro.limits.snapshotsPerMonth, "unlimited");
+  // usage increments on pass
+  const before = core.account({ api_key: "k-pro" }).usage.snapshots_this_month;
+  core.pass({ api_key: "k-pro", snapshot: { context: { goal: "metered" } } });
+  const after = core.account({ api_key: "k-pro" }).usage.snapshots_this_month;
+  assert.equal(after, before + 1);
+  ok("billing: plan resolution, usage metering, unlimited Pro");
+}
+
+console.log(`\n🕸️  BATON: ${pass}/10 groups passed\n`);

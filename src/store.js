@@ -45,6 +45,16 @@ export function openStore(path = "./data/baton.db") {
       fingerprint TEXT, contributor_hash TEXT, ip_hash TEXT, created_at INTEGER,
       UNIQUE(fingerprint, contributor_hash)
     );
+
+    -- M3-3: accounts + usage metering (payment integration is external).
+    CREATE TABLE IF NOT EXISTS accounts (
+      key_hash TEXT PRIMARY KEY, plan TEXT DEFAULT 'free', email_hash TEXT,
+      org TEXT, created_at INTEGER
+    );
+    CREATE TABLE IF NOT EXISTS usage_counters (
+      key_hash TEXT, kind TEXT, period TEXT, count INTEGER DEFAULT 0,
+      UNIQUE(key_hash, kind, period)
+    );
   `);
 
   // Additive migration: older corpus tables predate ip_hash (verified-forgery defense).
@@ -208,6 +218,28 @@ export function openStore(path = "./data/baton.db") {
       if (klass) rows = rows.filter((r) => r.klass === klass || r.klass.includes(klass));
       if (tags.length) rows = rows.filter((r) => r.tags.some((t) => tags.includes(t.toLowerCase())));
       return rows;
+    },
+    // ---- accounts + usage (M3-3) ----
+    getAccount(keyHash) {
+      return db.prepare(`SELECT plan, org, created_at FROM accounts WHERE key_hash=?`).get(keyHash) || null;
+    },
+    upsertAccount(keyHash, { plan = "free", emailHash = null, org = null } = {}) {
+      db.prepare(`INSERT INTO accounts(key_hash,plan,email_hash,org,created_at) VALUES(?,?,?,?,?)
+                  ON CONFLICT(key_hash) DO UPDATE SET plan=excluded.plan, org=excluded.org`)
+        .run(keyHash, plan, emailHash, org, now());
+      return true;
+    },
+    getUsage(keyHash, kind, period) {
+      const r = db.prepare(`SELECT count FROM usage_counters WHERE key_hash=? AND kind=? AND period=?`).get(keyHash, kind, period);
+      return r ? r.count : 0;
+    },
+    bumpUsage(keyHash, kind, period) {
+      db.prepare(`INSERT INTO usage_counters(key_hash,kind,period,count) VALUES(?,?,?,1)
+                  ON CONFLICT(key_hash,kind,period) DO UPDATE SET count=count+1`).run(keyHash, kind, period);
+    },
+    activeRoomCount(keyHash) {
+      // rooms don't carry an owner column in MVP; count via a usage counter instead.
+      return this.getUsage(keyHash, "rooms_active", "all");
     },
     _db: db,
   };
