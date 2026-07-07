@@ -1,3 +1,4 @@
+process.env.BATON_BILLING = "on";  // exercise gating in tests (default off in prod)
 // BATON E2E: exercise real flows, observe real side effects (not just "it built").
 import { openStore } from "../src/store.js";
 import { makeCore } from "../src/core.js";

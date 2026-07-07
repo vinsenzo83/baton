@@ -24,7 +24,11 @@ export function planOf(name) { return PLANS[name] || PLANS.free; }
 // Anonymous (no api_key) = a small free TRIAL, per-key-less shared bucket. Low on purpose so
 // real use hits the wall and converts to a free signup (baton_signup → own 20/mo bucket).
 // Tune here; the whole funnel keys off this number.
-export const ANON_MONTHLY = 5;
+// PAYMENT OFF (pivot phase): all gating disabled so the product can be dogfooded freely.
+// Set BATON_BILLING=on to re-enable the funnel/seats/quotas later. Runtime-checked (not
+// import-time) so tests and env changes take effect without reload.
+export const isBillingOn = () => process.env.BATON_BILLING === "on";
+export const anonMonthly = () => (isBillingOn() ? 5 : Infinity);
 
 // yyyy-mm bucket for monthly counters. Timestamp passed in (Date.now() is unavailable in some contexts).
 export function monthKey(ts) {

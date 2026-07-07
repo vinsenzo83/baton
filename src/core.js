@@ -8,7 +8,7 @@ import { roomCode, handoffCode, normalizeCode } from "./ids.js";
 import { fenceUntrusted, injectionFlags, scrubSecrets } from "./prompt-guard.js";
 import { sealBody } from "./crypto.js";
 import { gateVerdict } from "./verify.js";
-import { planOf, monthKey, ANON_MONTHLY } from "./plans.js";
+import { planOf, monthKey, anonMonthly, isBillingOn } from "./plans.js";
 import { codeHash } from "./crypto.js";
 import { participantId } from "./ids.js";
 import { paymentOptions, priceUsd, verifyPayment } from "./billing-crypto.js";
@@ -81,7 +81,7 @@ export function makeCore(store) {
       const a = acct(api_key);
       const period = monthKey(Date.now());
       const used = store.getUsage(a.keyHash || codeHash("anon:free"), "snapshots", period);
-      const cap = a.keyHash ? a.limits.snapshotsPerMonth : ANON_MONTHLY;
+      const cap = a.keyHash ? a.limits.snapshotsPerMonth : anonMonthly();
       return {
         plan: a.plan, org: a.org || undefined,
         limits: { ...a.limits, snapshotsPerMonth: cap === Infinity ? "unlimited" : cap,
@@ -135,7 +135,7 @@ export function makeCore(store) {
       if (alias != null) alias = normalizeAlias(alias);
       // B (seats): enforce the active-room limit per account (Free 2 · Pro 20 · Team ∞).
       const a = acct(api_key);
-      if (a.keyHash && a.limits.activeRooms !== Infinity) {
+      if (isBillingOn() && a.keyHash && a.limits.activeRooms !== Infinity) {
         const open = store.ownerActiveRooms(a.keyHash);
         if (open >= a.limits.activeRooms)
           throw new Error(`Active-room limit reached (${a.limits.activeRooms} on ${a.plan}). Close a room or run baton_upgrade.`);
@@ -163,7 +163,7 @@ export function makeCore(store) {
       // This is the orchestration paywall — how many AIs/people can collaborate at once.
       const ownerPlan = store.getAccountPlan(room.owner_hash);
       const seatCap = planOf(ownerPlan).limits.seatsPerRoom;
-      if (store.memberCount(room.code_hash) >= seatCap)
+      if (isBillingOn() && store.memberCount(room.code_hash) >= seatCap)
         throw new Error(`Room is full (${seatCap} seats on ${ownerPlan}). The room owner can baton_upgrade for more concurrent sessions.`);
       const m = store.join(code, alias, model);
       return { member_id: m.id, alias, hint: "Use this member_id for baton_send / baton_inbox." };
@@ -232,10 +232,10 @@ export function makeCore(store) {
       // M3-3: enforce the monthly snapshot quota (Free = 20/mo). Pro/Team are unlimited.
       const a = acct(api_key);
       const period = monthKey(Date.now());
-      if (a.limits.snapshotsPerMonth !== Infinity) {
+      if (isBillingOn() && a.limits.snapshotsPerMonth !== Infinity) {
         const key = a.keyHash || codeHash("anon:free");
         // Registered Free account → real 20/mo gate. Anonymous shared bucket → generous ANON limit.
-        const limit = a.keyHash ? a.limits.snapshotsPerMonth : ANON_MONTHLY;
+        const limit = a.keyHash ? a.limits.snapshotsPerMonth : anonMonthly();
         const used = store.getUsage(key, "snapshots", period);
         if (used >= limit)
           throw new Error(a.keyHash
