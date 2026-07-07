@@ -154,4 +154,22 @@ let pass = 0; const ok = (n) => { console.log("  ✓", n); pass++; };
   ok("consumed one-time snapshot is not re-readable via baton_diff");
 }
 
-console.log(`\n🕸️  BATON: ${pass}/11 groups passed\n`);
+// 12. crypto payment: invoice → settle upgrades plan; tx replay blocked (M3-5)
+{
+  const { codeHash } = await import("../src/crypto.js");
+  const st = openStore(DB);            // same DB file/connection for core + direct settle
+  const c2 = makeCore(st);
+  const inv = c2.upgrade({ plan: "pro", api_key: "pay-key-1" });
+  assert.match(inv.invoice_id, /^inv_/);
+  assert.equal(inv.amount_usd, 8);
+  assert.ok(inv.wallets.tron && inv.wallets.bsc);
+  // settle directly (on-chain verify is exercised separately) — tests store atomicity + upgrade + replay
+  const r1 = st.settleInvoice(inv.invoice_id, { chain: "tron", txHash: "0xTX1", plan: "pro", keyHash: codeHash("pay-key-1") });
+  assert.ok(r1.ok);
+  assert.equal(c2.account({ api_key: "pay-key-1" }).plan, "pro");   // upgraded
+  const r2 = st.settleInvoice(inv.invoice_id, { chain: "tron", txHash: "0xTX1", plan: "pro", keyHash: "x" });
+  assert.ok(!r2.ok);   // already paid / tx reused → blocked
+  ok("crypto payment: invoice → settle upgrades to Pro; replay/double-settle blocked");
+}
+
+console.log(`\n🕸️  BATON: ${pass}/12 groups passed\n`);

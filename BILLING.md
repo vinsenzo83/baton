@@ -19,6 +19,32 @@ Enforced in `src/plans.js` + `core.pass()` (monthly quota) and reported by `bato
 - Quota gate on Free (20 handoffs/mo, 7-day retention cap)
 - `POST /v1/billing/webhook` — sets a key's plan after a charge (secret-guarded)
 
+## Crypto payment (USDT/USDC — built, on-chain direct)
+
+No processor, no company, no fees beyond gas. User pays stablecoin to our wallet; the server
+verifies the tx on-chain and upgrades the plan.
+
+**Chains:** Tron (TRC-20) · BNB Smart Chain (BEP-20). **Tokens:** USDT, USDC.
+
+**Flow:**
+1. `baton_upgrade(plan, api_key)` → invoice + wallet addresses + amount ($8 Pro / $25 Team).
+2. User sends USDT/USDC to the Tron or BSC address.
+3. `baton_confirm_payment(invoice_id, chain, api_key, tx_hash)` → server checks the chain
+   (recipient = our wallet, token = USDT/USDC, amount ≥ price), burns the tx hash (no replay),
+   upgrades the account.
+
+**Owner setup (env on Railway):**
+```
+BATON_WALLET_TRON=<your Binance TRC-20 deposit address>
+BATON_WALLET_BSC=<your Binance BEP-20 deposit address>
+ETHERSCAN_API_KEY=<free key, verifies BSC via Etherscan V2 chainid=56>
+TRONGRID_API_KEY=<free TronGrid key>
+```
+Without wallet env, `baton_upgrade` shows "(not configured)" and confirm rejects — safe by default.
+Token contract addresses are in `src/billing-crypto.js` (mainnet USDT/USDC) — **verify before live funds.**
+
+⚠️ Binance deposit addresses: confirm they don't require a memo/tag for TRC-20/BEP-20 (USDT/USDC on these chains normally don't). Prefer a dedicated receiving wallet you control for cleaner tx attribution.
+
 ## What's a human step (payment)
 1. **Pick a provider** — Lemon Squeezy (global Merchant-of-Record, handles tax) or Stripe.
 2. **Create products** — Pro $8/mo, Team $25/mo.

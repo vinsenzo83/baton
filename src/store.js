@@ -55,6 +55,15 @@ export function openStore(path = "./data/baton.db") {
       key_hash TEXT, kind TEXT, period TEXT, count INTEGER DEFAULT 0,
       UNIQUE(key_hash, kind, period)
     );
+
+    -- M3-5: crypto payment invoices + spent tx hashes (replay protection).
+    CREATE TABLE IF NOT EXISTS invoices (
+      id TEXT PRIMARY KEY, key_hash TEXT, plan TEXT, amount REAL,
+      status TEXT DEFAULT 'pending', chain TEXT, tx_hash TEXT, created_at INTEGER
+    );
+    CREATE TABLE IF NOT EXISTS used_txs (
+      tx_hash TEXT PRIMARY KEY, chain TEXT, invoice_id TEXT, created_at INTEGER
+    );
   `);
 
   // Additive migration: older corpus tables predate ip_hash (verified-forgery defense).
@@ -241,6 +250,29 @@ export function openStore(path = "./data/baton.db") {
     activeRoomCount(keyHash) {
       // rooms don't carry an owner column in MVP; count via a usage counter instead.
       return this.getUsage(keyHash, "rooms_active", "all");
+    },
+
+    // ---- crypto invoices (M3-5) ----
+    createInvoice(id, keyHash, plan, amount) {
+      db.prepare(`INSERT INTO invoices(id,key_hash,plan,amount,status,created_at) VALUES(?,?,?,?,'pending',?)`)
+        .run(id, keyHash, plan, amount, now());
+      return true;
+    },
+    getInvoice(id) { return db.prepare(`SELECT * FROM invoices WHERE id=?`).get(id) || null; },
+    // Atomically settle an invoice + burn the tx hash (replay guard) + upgrade the account.
+    settleInvoice(id, { chain, txHash, plan, keyHash }) {
+      const tx = db.transaction(() => {
+        const inv = db.prepare(`SELECT status FROM invoices WHERE id=?`).get(id);
+        if (!inv || inv.status === "paid") return { ok: false, reason: "invoice missing or already paid" };
+        const used = db.prepare(`INSERT OR IGNORE INTO used_txs(tx_hash,chain,invoice_id,created_at) VALUES(?,?,?,?)`)
+          .run(txHash, chain, id, now()).changes;
+        if (!used) return { ok: false, reason: "this tx hash was already used" };
+        db.prepare(`UPDATE invoices SET status='paid', chain=?, tx_hash=? WHERE id=?`).run(chain, txHash, id);
+        db.prepare(`INSERT INTO accounts(key_hash,plan,created_at) VALUES(?,?,?)
+                    ON CONFLICT(key_hash) DO UPDATE SET plan=excluded.plan`).run(keyHash, plan, now());
+        return { ok: true };
+      });
+      return tx();
     },
     _db: db,
   };

@@ -10,6 +10,8 @@ import { sealBody } from "./crypto.js";
 import { gateVerdict } from "./verify.js";
 import { planOf, monthKey, ANON_MONTHLY } from "./plans.js";
 import { codeHash } from "./crypto.js";
+import { participantId } from "./ids.js";
+import { CHAINS, priceUsd, verifyPayment } from "./billing-crypto.js";
 
 const HOUR = 3600_000;
 const RESERVED = /(spider|거미|baton|system|시스템|보스|boss|admin|관리자|운영|보안)/i;
@@ -69,6 +71,37 @@ export function makeCore(store) {
         upgrade: a.plan === "free" ? "Pro $8/mo · Team $25/mo — contact to upgrade" : undefined,
       };
     },
+    // ---------- CRYPTO PAYMENTS (M3-5) ----------
+    // Create an invoice and return payment instructions (USDT/USDC on Tron or BSC).
+    upgrade({ plan, api_key } = {}) {
+      if (!["pro", "team"].includes(plan)) throw new Error("Plan must be 'pro' or 'team'.");
+      if (!api_key) throw new Error("api_key is required — this key becomes your paid account. Pick a strong, private string.");
+      const amount = priceUsd(plan);
+      const id = "inv_" + participantId().slice(2);
+      store.createInvoice(id, codeHash(api_key), plan, amount);
+      const wallets = {};
+      for (const [k, c] of Object.entries(CHAINS)) wallets[k] = { label: c.label, address: c.wallet() || "(not configured)", tokens: Object.keys(c.tokens) };
+      return {
+        invoice_id: id, plan, amount_usd: amount,
+        pay_with: "USDT or USDC", wallets,
+        instructions: `Send ${amount} USDT/USDC to one of the addresses above (Tron TRC-20 or BSC BEP-20), then call baton_confirm_payment with invoice_id, chain (tron|bsc), your api_key, and the tx hash.`,
+        note: "Send at least the exact amount. Underpayment won't upgrade.",
+      };
+    },
+    // Verify an on-chain payment and upgrade the plan. Async (queries the chain).
+    async confirmPayment({ invoice_id, api_key, chain, tx_hash } = {}) {
+      const inv = store.getInvoice(invoice_id);
+      if (!inv) throw new Error("Invoice not found.");
+      if (inv.status === "paid") throw new Error("Invoice already paid.");
+      if (!api_key || codeHash(api_key) !== inv.key_hash) throw new Error("api_key does not match this invoice.");
+      if (!tx_hash) throw new Error("tx_hash is required.");
+      const v = await verifyPayment({ chain, txHash: tx_hash, minUsd: inv.amount });
+      if (!v.ok) throw new Error(`Payment not verified: ${v.reason}`);
+      const settled = store.settleInvoice(invoice_id, { chain, txHash: tx_hash, plan: inv.plan, keyHash: inv.key_hash });
+      if (!settled.ok) throw new Error(settled.reason);
+      return { ok: true, plan: inv.plan, amount_paid: v.amount, badge: `✅ Upgraded to ${inv.plan.toUpperCase()} via ${chain}` };
+    },
+
     // Set a plan for an API key (called by the payment webhook after a successful charge).
     setPlan({ api_key, plan, org } = {}) {
       if (!api_key) throw new Error("api_key is required.");

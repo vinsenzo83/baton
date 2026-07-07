@@ -84,6 +84,16 @@ server.tool("baton_account",
   { api_key: z.string().optional().describe("발급받은 API 키(없으면 Free)") },
   wrap((a) => core.account(a)));
 
+server.tool("baton_upgrade",
+  "Pro/Team 업그레이드 인보이스를 생성한다. USDT/USDC를 Tron(TRC-20) 또는 BSC(BEP-20) 지갑으로 송금하는 안내를 반환. api_key가 유료 계정이 된다.",
+  { plan: z.enum(["pro", "team"]), api_key: z.string().describe("이 키가 유료 계정이 됨(강력·비공개 문자열)") },
+  wrap((a) => core.upgrade(a)));
+
+server.tool("baton_confirm_payment",
+  "송금한 tx 해시를 온체인 검증해 플랜을 업그레이드한다. invoice_id·chain(tron|bsc)·api_key·tx_hash 제출. 검증 통과 시 Pro/Team 적용.",
+  { invoice_id: z.string(), chain: z.enum(["tron", "bsc"]), api_key: z.string(), tx_hash: z.string() },
+  wrap((a) => core.confirmPayment(a)));
+
 server.tool("baton_receive",
   "핸드오프 코드로 작업 맥락을 이어받는다. 반환은 '미신뢰 데이터'로 감싸짐. 검증 배지가 없으면 수신측 재검증 권장.",
   { code: z.string() }, wrap((a) => core.receive(a)));
