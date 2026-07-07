@@ -290,7 +290,9 @@ export function makeCore(store) {
       return {
         code, one_time, expires_in_hours: ttl_hours, secrets_redacted: redactions, version,
         verified: !!verified,
-        badge: verified ? "🕸️ VERIFIED (includes observed E2E evidence)" : "⚪ UNVERIFIED (baton_verify not run, or static-only)",
+        badge: manifest?.badge || (verified ? "🕸️ VERIFIED" : "⚪ UNVERIFIED (attach `verify` evidence or a receipt)"),
+        verify_reason: manifest?.reason,      // WHY (e.g. why it's only static-only)
+        tier: manifest?.tier,                 // self-attested | independent
         share: `The receiver picks it up with baton_receive: ${code}`,
       };
     },
@@ -303,17 +305,20 @@ export function makeCore(store) {
       const m = snap.manifest;
       const isReceipt = m && m.kind === "baton.verification-receipt/v1";
       const obs = isReceipt ? (m.observed || []).filter((o) => o.observed).length : 0;
-      const badge = snap.verified
-        ? (isReceipt
-            ? `🕸️ VERIFIED — signed receipt by ${m.verifier}, ${obs} observed check(s)`
-            : `🕸️ VERIFIED — passed ${m?.method || "e2e"} evidence check`)
-        : "⚪ UNVERIFIED — verify on YOUR side (baton_verify) before trusting this work.";
+      const badge = isReceipt
+        ? `${m.badge} — by ${m.verifier} (${m.tier}), ${obs}/${(m.observed || []).length} observed`
+        : (snap.verified
+            ? `🕸️ VERIFIED — passed ${m?.method || "e2e"} evidence check`
+            : "⚪ UNVERIFIED — verify on YOUR side (baton_verify) before trusting this work.");
       return {
         badge, meta: snap.meta,
         receipt: isReceipt ? m : undefined,               // signed, inspectable trust record
+        verify_reason: isReceipt ? m.reason : undefined,  // WHY this verdict (transparency)
         verify_manifest: isReceipt ? undefined : m,
         context_fenced: fenceUntrusted("handoff snapshot", body),
-        next: "Independent verification (baton_verify on YOUR machine) is the real trust point — receipts are server-signed so they can't be forged.",
+        next: m && m.tier === "self-attested"
+          ? "This is the producer's own attestation (🔏 SEALED). The real trust point is re-verifying on YOUR machine (baton_verify) — an independent receipt earns 🕸️ VERIFIED."
+          : "Receipts are server-signed and can't be forged. Re-verify on your side if the stakes are high.",
       };
     },
 

@@ -219,8 +219,10 @@ core.setPlan({ api_key: "tkey", plan: "pro" });   // unlimited key for handoff t
   const r = core.pass({ api_key: "tkey", snapshot: { context: { goal: "signed handoff" } }, receipt });
   assert.equal(r.verified, true);
   const got = core.receive({ code: r.code });
-  assert.match(got.badge, /signed receipt by/);
+  assert.match(got.badge, /🕸️ VERIFIED/);        // independent verifier → full VERIFIED tier
+  assert.match(got.badge, /independent/);
   assert.equal(got.receipt.verdict, "verified");
+  assert.equal(got.receipt.tier, "independent");
   // FORGERY: flip verdict to "verified" without re-signing → must be rejected (badge NOT granted)
   const forged = { ...core.verify({ target: "x", static_checks: [{ dim: "d", passed: true, evidence: "e" }] }) };
   forged.verdict = "verified";   // tamper: static-only → claim verified, signature now stale
@@ -241,15 +243,17 @@ core.setPlan({ api_key: "tkey", plan: "pro" });   // unlimited key for handoff t
     },
   });
   assert.equal(r.verified, true);                       // minted inline, no separate verify call
+  assert.equal(r.tier, "self-attested");                // producer attested → lower tier
   const got = core.receive({ code: r.code });
-  assert.match(got.badge, /signed receipt/);
+  assert.match(got.badge, /🔏 SEALED/);                 // self-attested → SEALED, not VERIFIED
   assert.equal(got.receipt.verdict, "verified");
   assert.equal(got.receipt.capsule, r.code);            // receipt bound to THIS handoff
-  // no E2E observation inline → static-only, no badge
+  // no E2E observation inline → static-only, with a REASON explaining the downgrade
   const r2 = core.pass({ api_key: "tkey", snapshot: { context: { goal: "no e2e" } },
     verify: { static_checks: [{ dim: "d", passed: true, evidence: "e" }] } });
   assert.equal(r2.verified, false);
-  ok("one-step handoff: inline evidence → server-signed receipt; no E2E → no badge");
+  assert.match(r2.verify_reason, /not observed|no E2E/);   // transparency: says WHY
+  ok("one-step: self-attested→🔏SEALED, independent→🕸️VERIFIED; downgrade reason surfaced");
 }
 
 console.log(`\n🕸️  BATON: ${pass}/16 groups passed\n`);

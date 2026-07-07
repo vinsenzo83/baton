@@ -35,23 +35,42 @@ export function planVerify({ target, claims = [] } = {}) {
 // static_checks: [{dim, passed, evidence}], e2e_evidence: [{claim, observed, detail}]
 export function gateVerdict({ verifier = "receiver-spider", target, static_checks = [], e2e_evidence = [] } = {}) {
   const staticPass = static_checks.length > 0 && static_checks.every((s) => s.passed);
-  const e2eObserved = e2e_evidence.length > 0 && e2e_evidence.every((e) => e.observed === true);
+  const unobserved = e2e_evidence.filter((e) => e.observed !== true);
+  const e2eObserved = e2e_evidence.length > 0 && unobserved.length === 0;
   // The hard rule: no E2E observation → cannot be verified, only static-only.
-  let verdict;
-  if (!e2eObserved) verdict = "static-only";
-  else if (!staticPass) verdict = "failed";
-  else verdict = "verified";
+  let verdict, reason;
+  if (!e2eObserved) {
+    verdict = "static-only";
+    reason = e2e_evidence.length === 0
+      ? "no E2E evidence supplied — a passing build ≠ working behavior; run the flow and observe a side effect"
+      : `${unobserved.length}/${e2e_evidence.length} E2E claim(s) not observed: ${unobserved.map((e) => `"${e.claim}"`).join(", ")}. Every claim needs observed:true.`;
+  } else if (!staticPass) {
+    verdict = "failed";
+    reason = static_checks.length === 0
+      ? "no static checks supplied"
+      : `static check failed: ${static_checks.filter((s) => !s.passed).map((s) => s.dim).join(", ")}`;
+  } else {
+    verdict = "verified";
+    reason = `all ${static_checks.length} static checks passed and all ${e2e_evidence.length} E2E claim(s) observed`;
+  }
 
   const manifest = {
     verifier, target, method: e2eObserved ? "static+e2e" : "static",
-    static_checks, e2e_evidence, verdict,
-    badge: verdict === "verified" ? "🕸️ VERIFIED"
-         : verdict === "failed" ? "🔴 FAILED"
-         : "⚪ STATIC-ONLY (관측 증거 없음 — 완료 주장 신뢰 불가)",
-    // signed-ish attestation of exactly what was compared (H1: label what was checked)
+    static_checks, e2e_evidence, verdict, reason,
+    badge: badgeFor(verdict, verifier),
     attested: `${static_checks.length} static checks, ${e2e_evidence.filter((e) => e.observed).length}/${e2e_evidence.length} E2E observations`,
   };
-  return { verdict, manifest };
+  return { verdict, reason, manifest };
+}
+
+// Badge TIER: independent verification (verifier ≠ producer) earns the full 🕸️ VERIFIED.
+// A producer self-attesting earns only 🔏 SEALED — signed and tamper-proof, but grade it lower;
+// the real trust point is an independent replay on the receiver's side.
+export function badgeFor(verdict, verifier) {
+  const independent = verifier && verifier !== "self-attested";
+  if (verdict === "verified") return independent ? "🕸️ VERIFIED" : "🔏 SEALED (self-attested — receiver should re-verify)";
+  if (verdict === "failed") return "🔴 FAILED";
+  return "⚪ STATIC-ONLY (no observed evidence — claims not trusted)";
 }
 
 // ── Verification Receipt (the differentiator) ──
@@ -59,17 +78,21 @@ export function gateVerdict({ verifier = "receiver-spider", target, static_check
 // what was observed, with what artifacts, and the verdict. The signature makes it a trust unit
 // no client can forge — "never trust an agent handoff without a receipt."
 export function issueReceipt({ verifier, target, capsule, environment, static_checks = [], e2e_evidence = [], artifacts = [], issued_at = 0 } = {}) {
-  const { verdict } = gateVerdict({ verifier, target, static_checks, e2e_evidence });
+  const v = verifier || "receiver-spider";
+  const { verdict, reason } = gateVerdict({ verifier: v, target, static_checks, e2e_evidence });
   const body = {
     kind: "baton.verification-receipt/v1",
     capsule: capsule || null,                 // hash of the handoff this verifies
     target: target || null,
-    verifier: verifier || "receiver-spider",  // WHO verified (independent of the producer)
+    verifier: v,                              // WHO verified (independent of the producer)
+    tier: v === "self-attested" ? "self-attested" : "independent",
     environment: environment || {},           // os / runtime / commit the replay ran in
     static_checks,
     observed: e2e_evidence,                    // what was actually run + observed
     artifacts,                                 // trace / har / screenshots / logs digests
     verdict,                                   // verified | static-only | failed
+    reason,                                    // WHY this verdict (transparency)
+    badge: badgeFor(verdict, v),
     issued_at,
   };
   return { ...body, signature: signReceipt(body) };
