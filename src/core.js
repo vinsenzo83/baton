@@ -52,28 +52,28 @@ export function makeCore(store) {
       if (alias) member_id = store.join(code, alias, "creator").id;
       return { code, name: name || null, expires_in_hours: ttl_hours,
         member_id, alias: alias || null,
-        share: `이 코드를 아는 세션만 입장합니다: ${code}` };
+        share: `Only sessions that know this code can join: ${code}` };
     },
 
     join({ code, alias, model } = {}) {
       code = normalizeCode(code);
       alias = normalizeAlias(alias);                 // M1: trim + NFKC + collapse before checks
-      if (!alias) throw new Error("alias(방 안에서 쓸 별명)가 필요합니다.");
+      if (!alias) throw new Error("alias (a display name for the room) is required.");
       const room = store.getRoom(code);
-      if (!room) throw new Error("코드가 유효하지 않거나 만료되었습니다.");
+      if (!room) throw new Error("Code is invalid or expired.");
       // M1: reserved-name check on the confusable-folded alias (blocks "admin ", " boss", "аdmin")
       if (RESERVED.test(foldConfusable(alias)) || store.aliasTaken(room.code_hash, alias))
-        throw new Error(`별명 '${alias}'은 예약되었거나 이미 사용 중입니다.`);
+        throw new Error(`Alias '${alias}' is reserved or already taken.`);
       const m = store.join(code, alias, model);
-      return { member_id: m.id, alias, hint: "baton_send / baton_inbox 에 이 member_id를 사용하세요." };
+      return { member_id: m.id, alias, hint: "Use this member_id for baton_send / baton_inbox." };
     },
 
     send({ code, member_id, to, text } = {}) {
       code = normalizeCode(code);
       const room = store.getRoom(code);
-      if (!room) throw new Error("코드가 유효하지 않거나 만료되었습니다.");
+      if (!room) throw new Error("Code is invalid or expired.");
       const me = store.members(room.code_hash).find((x) => x.id === member_id);
-      if (!me) throw new Error("member_id가 이 방에 없습니다. 먼저 baton_join 하세요.");
+      if (!me) throw new Error("member_id is not in this room. Run baton_join first.");
       const { text: clean, redactions } = scrubSecrets(String(text || ""));
       const seq = store.send(code, room.code_hash, member_id, me.alias, to, clean);
       return { seq, from: me.alias, to: to || "(all)", redactions };
@@ -82,9 +82,9 @@ export function makeCore(store) {
     inbox({ code, member_id, since = 0 } = {}) {
       code = normalizeCode(code);
       const room = store.getRoom(code);
-      if (!room) throw new Error("코드가 유효하지 않거나 만료되었습니다.");
+      if (!room) throw new Error("Code is invalid or expired.");
       const me = store.members(room.code_hash).find((x) => x.id === member_id);
-      if (!me) throw new Error("member_id가 이 방에 없습니다.");
+      if (!me) throw new Error("member_id is not in this room.");
       const msgs = store.inbox(code, room.code_hash, me.alias, since);
       const flagged = msgs.map((m) => ({ ...m, injection_flags: injectionFlags(m.text) }));
       return {
@@ -98,9 +98,9 @@ export function makeCore(store) {
     inboxRaw({ code, member_id, since = 0 } = {}) {
       code = normalizeCode(code);
       const room = store.getRoom(code);
-      if (!room) throw new Error("코드가 유효하지 않거나 만료되었습니다.");
+      if (!room) throw new Error("Code is invalid or expired.");
       const me = store.members(room.code_hash).find((x) => x.id === member_id);
-      if (!me) throw new Error("member_id가 이 방에 없습니다.");
+      if (!me) throw new Error("member_id is not in this room.");
       const messages = store.inbox(code, room.code_hash, me.alias, since);
       return { count: messages.length, next_since: messages.length ? messages[messages.length - 1].seq : since, messages };
     },
@@ -108,7 +108,7 @@ export function makeCore(store) {
     who({ code } = {}) {
       code = normalizeCode(code);
       const room = store.getRoom(code);
-      if (!room) throw new Error("코드가 유효하지 않거나 만료되었습니다.");
+      if (!room) throw new Error("Code is invalid or expired.");
       return { members: store.members(room.code_hash) };
     },
 
@@ -116,7 +116,7 @@ export function makeCore(store) {
     // The client model fills `snapshot` in the BATON Snapshot v1 shape. We scrub secrets,
     // seal under a fresh code, and (optionally) attach a verification manifest.
     pass({ snapshot, one_time = false, ttl_hours = 72, verify_manifest = null } = {}) {
-      if (!snapshot || !snapshot.context) throw new Error("snapshot.context 가 필요합니다 (BATON Snapshot v1).");
+      if (!snapshot || !snapshot.context) throw new Error("snapshot.context is required (BATON Snapshot v1).");
       const raw = JSON.stringify(snapshot);
       const { text: clean, redactions } = scrubSecrets(raw);
       const code = handoffCode();
@@ -146,30 +146,30 @@ export function makeCore(store) {
       return {
         code, one_time, expires_in_hours: ttl_hours, secrets_redacted: redactions,
         verified: !!verified,
-        badge: verified ? "🕸️ VERIFIED (E2E 관측 증거 포함)" : "⚪ UNVERIFIED (baton_verify 미실행 또는 static-only)",
-        share: `받는 쪽에서 baton_receive 로 이어받습니다: ${code}`,
+        badge: verified ? "🕸️ VERIFIED (includes observed E2E evidence)" : "⚪ UNVERIFIED (baton_verify not run, or static-only)",
+        share: `The receiver picks it up with baton_receive: ${code}`,
       };
     },
 
     receive({ code } = {}) {
       code = normalizeCode(code);
       const snap = store.takeSnapshot(code);
-      if (!snap) throw new Error("핸드오프 코드가 유효하지 않거나, 만료됐거나, 이미 1회용으로 소비되었습니다.");
+      if (!snap) throw new Error("Handoff code is invalid, expired, or already consumed (one-time).");
       const body = JSON.parse(snap.body);
       const badge = snap.verified
-        ? `🕸️ VERIFIED — ${snap.manifest?.method || "e2e"} 증거 대조 통과`
-        : "⚪ UNVERIFIED — 이 스냅샷의 완료 주장은 수신측에서 재검증(baton_verify)을 권장합니다.";
+        ? `🕸️ VERIFIED — passed ${snap.manifest?.method || "e2e"} evidence check`
+        : "⚪ UNVERIFIED — re-verify this snapshot's claims on the receiving side (baton_verify).";
       return {
         badge, meta: snap.meta, verify_manifest: snap.manifest,
         context_fenced: fenceUntrusted("handoff snapshot", body),
-        next: "수신측 거미 재검증을 원하면 baton_verify 를 실행하세요 (수신자측 대조가 진짜 신뢰 지점).",
+        next: "Run baton_verify to re-check on the receiving side (receiver-side verification is the real trust point).",
       };
     },
 
     revoke({ code } = {}) {
       code = normalizeCode(code);
       const ok = store.revoke(code);
-      return { revoked: ok, note: ok ? "코드 파기 — 복호 불가(crypto-shred)." : "해당 코드를 찾지 못했습니다." };
+      return { revoked: ok, note: ok ? "Code shredded — no longer decryptable (crypto-shred)." : "Code not found." };
     },
   };
 }

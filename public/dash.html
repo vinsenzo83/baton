@@ -62,29 +62,33 @@ a{color:var(--accent)}
 .compose button{background:var(--accent);color:#0e1014;border:0;border-radius:10px;padding:0 18px;font-weight:800;cursor:pointer;font-family:inherit}
 .to-sel{background:var(--surface2);border:1px solid var(--line);border-radius:10px;color:var(--ink);padding:0 10px;font-size:13px;font-family:inherit}
 .leave{cursor:pointer;color:var(--ink2);font-size:12px;text-decoration:underline}
+.langtoggle{position:fixed;top:14px;right:16px;z-index:50;background:var(--surface);border:1px solid var(--line);color:var(--ink2);border-radius:99px;padding:6px 14px;font-size:12.5px;font-weight:700;cursor:pointer;font-family:inherit}
+.langtoggle:hover{border-color:var(--accent)}
 </style>
 </head>
 <body>
 
+<button class="langtoggle" id="langtoggle" onclick="toggleLang()">한국어</button>
+
 <!-- GATE -->
 <div class="gate" id="gate">
-  <h1><span class="b">BATON</span> 실시간 방</h1>
-  <p>방 코드로 들어가면 쪽지가 실시간으로 뜹니다. 말로 "확인해줘" 안 해도 됩니다.</p>
+  <h1><span class="b">BATON</span> <span id="t-title">Live Room</span></h1>
+  <p id="t-lead">Join with a room code and messages appear in real time — no need to ask "check inbox."</p>
   <div class="tabs">
-    <div class="tab on" id="tabJoin" onclick="mode('join')">코드로 입장</div>
-    <div class="tab" id="tabNew" onclick="mode('new')">새 방 만들기</div>
+    <div class="tab on" id="tabJoin" onclick="mode('join')">Join with code</div>
+    <div class="tab" id="tabNew" onclick="mode('new')">New room</div>
   </div>
   <div id="joinFields">
-    <label>방 코드 (BTN-R-…)</label>
+    <label id="t-l-code">Room code (BTN-R-…)</label>
     <input id="code" class="mono" placeholder="BTN-R-XXXX-XXXX-…" autocomplete="off">
   </div>
   <div id="newFields" style="display:none">
-    <label>방 이름 (선택)</label>
-    <input id="rname" placeholder="예: 봉이-CMI 협업" autocomplete="off">
+    <label id="t-l-name">Room name (optional)</label>
+    <input id="rname" placeholder="e.g. Bongee-CMI collab" autocomplete="off">
   </div>
-  <label>내 별명</label>
-  <input id="alias" placeholder="예: 사장 / dev / 상대" autocomplete="off">
-  <button class="btn" id="enter" onclick="enter()">입장</button>
+  <label id="t-l-alias">Your name</label>
+  <input id="alias" placeholder="e.g. boss / dev / partner" autocomplete="off">
+  <button class="btn" id="enter" onclick="enter()">Enter</button>
   <div class="err" id="err"></div>
 </div>
 
@@ -92,16 +96,16 @@ a{color:var(--accent)}
 <div class="top" id="top" style="display:none">
   <span class="brand"><span class="b">B</span> BATON</span>
   <span class="rmeta"><span id="rname2"></span> · <span class="code mono" id="rcode"></span>
-    <button class="copy" onclick="copyCode()">코드 복사</button>
-    <span class="leave" onclick="leave()" style="margin-left:10px">나가기</span></span>
+    <button class="copy" id="t-copy" onclick="copyCode()">Copy code</button>
+    <span class="leave" id="t-leave" onclick="leave()" style="margin-left:10px">Leave</span></span>
 </div>
 <div class="chat" id="chat">
   <div class="who" id="who"></div>
   <div class="stream" id="stream"></div>
   <div class="compose">
-    <select class="to-sel" id="to"><option value="">전체에게</option></select>
-    <input id="msg" placeholder="메시지를 입력…" onkeydown="if(event.key==='Enter')doSend()">
-    <button onclick="doSend()">보내기</button>
+    <select class="to-sel" id="to"><option value="">Everyone</option></select>
+    <input id="msg" placeholder="Type a message…" onkeydown="if(event.key==='Enter')doSend()">
+    <button id="t-send" onclick="doSend()">Send</button>
   </div>
 </div>
 
@@ -110,23 +114,52 @@ const $ = (id) => document.getElementById(id);
 let S = JSON.parse(localStorage.getItem("baton") || "null");
 let since = 0, poll = null, seenMembers = new Set();
 
+// ---- i18n (English default, Korean toggle) ----
+const I18N = {
+  en: { title:"Live Room", lead:'Join with a room code and messages appear in real time — no need to ask "check inbox."',
+    tabJoin:"Join with code", tabNew:"New room", lCode:"Room code (BTN-R-…)", lName:"Room name (optional)",
+    lAlias:"Your name", enter:"Enter", enterNew:"Create & enter", copy:"Copy code", leave:"Leave",
+    everyone:"Everyone", send:"Send", msgPh:"Type a message…", room:"Room",
+    needAlias:"Enter your name.", needCode:"Enter a room code.", reqFail:"Request failed", toName:(a)=>`to ${a}` },
+  ko: { title:"실시간 방", lead:'방 코드로 들어가면 쪽지가 실시간으로 뜹니다. 말로 "확인해줘" 안 해도 됩니다.',
+    tabJoin:"코드로 입장", tabNew:"새 방 만들기", lCode:"방 코드 (BTN-R-…)", lName:"방 이름 (선택)",
+    lAlias:"내 별명", enter:"입장", enterNew:"방 만들고 입장", copy:"코드 복사", leave:"나가기",
+    everyone:"전체에게", send:"보내기", msgPh:"메시지를 입력…", room:"방",
+    needAlias:"별명을 입력하세요.", needCode:"방 코드를 입력하세요.", reqFail:"요청 실패", toName:(a)=>`→ ${a}` },
+};
+let LANG = (localStorage.getItem("baton_lang") || (navigator.language||"en").slice(0,2)) === "ko" ? "ko" : "en";
+const T = () => I18N[LANG];
+function applyLang() {
+  const t = T();
+  $("t-title").textContent = t.title; $("t-lead").textContent = t.lead;
+  $("tabJoin").textContent = t.tabJoin; $("tabNew").textContent = t.tabNew;
+  $("t-l-code").textContent = t.lCode; $("t-l-name").textContent = t.lName; $("t-l-alias").textContent = t.lAlias;
+  $("enter").textContent = $("enter").dataset.mode === "new" ? t.enterNew : t.enter;
+  $("t-copy").textContent = t.copy; $("t-leave").textContent = t.leave;
+  $("to").options[0].textContent = t.everyone; $("t-send").textContent = t.send;
+  $("msg").placeholder = t.msgPh;
+  $("langtoggle").textContent = LANG === "en" ? "한국어" : "English";
+  document.documentElement.lang = LANG;
+}
+function toggleLang() { LANG = LANG === "en" ? "ko" : "en"; localStorage.setItem("baton_lang", LANG); applyLang(); }
+
 const api = (path, body) => fetch("/api" + path, {
   method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
-}).then(async (r) => { const j = await r.json(); if (!r.ok || j.error) throw new Error(j.error || "요청 실패"); return j; });
+}).then(async (r) => { const j = await r.json(); if (!r.ok || j.error) throw new Error(j.error || T().reqFail); return j; });
 
 function mode(m) {
   $("tabJoin").classList.toggle("on", m === "join");
   $("tabNew").classList.toggle("on", m === "new");
   $("joinFields").style.display = m === "join" ? "" : "none";
   $("newFields").style.display = m === "new" ? "" : "none";
-  $("enter").textContent = m === "new" ? "방 만들고 입장" : "입장";
   $("enter").dataset.mode = m;
+  $("enter").textContent = m === "new" ? T().enterNew : T().enter;
 }
 
 async function enter() {
   $("err").textContent = "";
   const alias = $("alias").value.trim();
-  if (!alias) return $("err").textContent = "별명을 입력하세요.";
+  if (!alias) return $("err").textContent = T().needAlias;
   try {
     let code, member_id;
     if ($("enter").dataset.mode === "new") {
@@ -134,7 +167,7 @@ async function enter() {
       code = r.code; member_id = r.member_id;
     } else {
       code = $("code").value.trim();
-      if (!code) return $("err").textContent = "방 코드를 입력하세요.";
+      if (!code) return $("err").textContent = T().needCode;
       const r = await api("/join", { code, alias });
       member_id = r.member_id;
     }
@@ -149,7 +182,7 @@ async function start() {
   $("top").style.display = "flex";
   $("chat").classList.add("on");
   $("rcode").textContent = S.code;
-  $("rname2").textContent = S.rname || "방";
+  $("rname2").textContent = S.rname || T().room;
   since = 0; $("stream").innerHTML = ""; seenMembers = new Set();
   if ("Notification" in window && Notification.permission === "default") Notification.requestPermission();
   await tick(); poll = setInterval(tick, 2500);
@@ -169,8 +202,8 @@ function renderWho(members) {
   $("who").innerHTML = "👥 " + members.map((m) =>
     `<span class="pill"><span class="dot">●</span> ${esc(m.alias)} <span style="color:var(--ink2)">${esc(m.model||"")}</span></span>`).join("");
   const to = $("to"); const cur = to.value;
-  to.innerHTML = '<option value="">전체에게</option>' + members.filter((m) => m.alias !== S.alias)
-    .map((m) => `<option value="${esc(m.alias)}">${esc(m.alias)} 에게</option>`).join("");
+  to.innerHTML = `<option value="">${esc(T().everyone)}</option>` + members.filter((m) => m.alias !== S.alias)
+    .map((m) => `<option value="${esc(m.alias)}">${esc(T().toName(m.alias))}</option>`).join("");
   to.value = cur;
 }
 
@@ -199,6 +232,7 @@ function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => (
 function time(t) { const d = new Date(t); return d.toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" }); }
 
 $("enter").dataset.mode = "join";
+applyLang();
 if (S && S.code && S.member_id) start();
 </script>
 </body>
