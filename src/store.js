@@ -107,8 +107,18 @@ export function openStore(path = "./data/baton.db") {
       if (!alive(r)) return null;
       return { ...r, name: safeOpen(code, r) };
     },
-    memberCount(roomHash) {
-      return db.prepare(`SELECT COUNT(*) AS n FROM members WHERE room_hash=?`).get(roomHash).n;
+    // Concurrent = members seen within the active window (default 3 min). A session that
+    // stopped polling frees its seat, so "seats" means concurrent, not lifetime joins (🟠2).
+    memberCount(roomHash, windowMs = 180_000) {
+      return db.prepare(`SELECT COUNT(*) AS n FROM members WHERE room_hash=? AND last_seen > ?`)
+        .get(roomHash, now() - windowMs).n;
+    },
+    // Explicit leave frees the seat immediately.
+    leaveMember(roomHash, memberId) {
+      return db.prepare(`DELETE FROM members WHERE room_hash=? AND id=?`).run(roomHash, memberId).changes > 0;
+    },
+    touchMember(memberId) {
+      db.prepare(`UPDATE members SET last_seen=? WHERE id=?`).run(now(), memberId);
     },
     getAccountPlan(keyHash) {
       if (!keyHash) return "free";

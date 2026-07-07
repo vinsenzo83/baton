@@ -186,6 +186,7 @@ export function makeCore(store) {
       if (!room) throw new Error("Code is invalid or expired.");
       const me = store.members(room.code_hash).find((x) => x.id === member_id);
       if (!me) throw new Error("member_id is not in this room.");
+      store.touchMember(member_id);   // polling keeps the seat alive (concurrent-seat window)
       const msgs = store.inbox(code, room.code_hash, me.alias, since);
       const flagged = msgs.map((m) => ({ ...m, injection_flags: injectionFlags(m.text) }));
       return {
@@ -202,6 +203,7 @@ export function makeCore(store) {
       if (!room) throw new Error("Code is invalid or expired.");
       const me = store.members(room.code_hash).find((x) => x.id === member_id);
       if (!me) throw new Error("member_id is not in this room.");
+      store.touchMember(member_id);   // dashboard polling keeps the seat alive
       const messages = store.inbox(code, room.code_hash, me.alias, since);
       return { count: messages.length, next_since: messages.length ? messages[messages.length - 1].seq : since, messages };
     },
@@ -211,6 +213,15 @@ export function makeCore(store) {
       const room = store.getRoom(code);
       if (!room) throw new Error("Code is invalid or expired.");
       return { members: store.members(room.code_hash) };
+    },
+
+    // Leave a room — frees the seat immediately (🟠2: makes seats truly concurrent).
+    leave({ code, member_id } = {}) {
+      code = normalizeCode(code);
+      const room = store.getRoom(code);
+      if (!room) throw new Error("Code is invalid or expired.");
+      const ok = store.leaveMember(room.code_hash, member_id);
+      return { left: ok };
     },
 
     // ---------- HANDOFF ----------

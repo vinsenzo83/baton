@@ -58,6 +58,9 @@ server.tool("baton_inbox",
 server.tool("baton_who", "방 참가자·모델·최근 활동을 본다.",
   { code: z.string() }, wrap((a) => core.who(a)));
 
+server.tool("baton_leave", "방에서 나간다 — 좌석(seat)을 즉시 반납해 다른 세션이 들어올 수 있게 한다.",
+  { code: z.string(), member_id: z.string() }, wrap((a) => core.leave(a)));
+
 // ───────────────────────── HANDOFF ─────────────────────────
 server.tool("baton_pass",
   "현재 작업을 BATON Snapshot v1로 봉인해 핸드오프 코드(BTN-H-…)를 발급한다. 본문은 코드-파생 키로 암호화(서버가 평문 못 봄), 시크릿 자동 마스킹. verify_manifest를 첨부하면 검증 배지가 붙는다.",
@@ -170,6 +173,7 @@ if (process.env.BATON_HTTP === "1") {
   app.post("/api/who",    rlRead,  api((b) => core.who(b)));
   app.post("/api/send",   rlWrite, api((b) => core.send(b)));
   app.post("/api/inbox",  rlRead,  api((b) => core.inboxRaw(b)));
+  app.post("/api/leave",  rlWrite, api((b) => core.leave(b)));
 
   // ── Shared spider corpus (M2-2), same shape spider_* tools speak (/v1/patterns) ──
   const { preparePattern } = await import("./corpus-scrub.js");
