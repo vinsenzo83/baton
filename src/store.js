@@ -42,10 +42,13 @@ export function openStore(path = "./data/baton.db") {
       verified INTEGER DEFAULT 0, created_at INTEGER, updated_at INTEGER
     );
     CREATE TABLE IF NOT EXISTS spider_contributions (
-      fingerprint TEXT, contributor_hash TEXT, created_at INTEGER,
+      fingerprint TEXT, contributor_hash TEXT, ip_hash TEXT, created_at INTEGER,
       UNIQUE(fingerprint, contributor_hash)
     );
   `);
+
+  // Additive migration: older corpus tables predate ip_hash (verified-forgery defense).
+  try { db.exec(`ALTER TABLE spider_contributions ADD COLUMN ip_hash TEXT`); } catch { /* already present */ }
 
   const now = () => Date.now();
   const alive = (row) => row && (!row.expires_at || row.expires_at > now());
@@ -153,14 +156,18 @@ export function openStore(path = "./data/baton.db") {
           db.prepare(`UPDATE spider_patterns SET hit_count=hit_count+1, updated_at=? WHERE fingerprint=?`).run(now(), rec.fingerprint);
           action = "merged";
         }
-        // distinct-contributor accounting → verified promotion
-        const isNew = db.prepare(`INSERT OR IGNORE INTO spider_contributions(fingerprint,contributor_hash,created_at) VALUES(?,?,?)`)
-          .run(rec.fingerprint, rec.contributor_hash, now()).changes > 0;
+        // distinct-contributor accounting (by token hash)
+        const isNew = db.prepare(`INSERT OR IGNORE INTO spider_contributions(fingerprint,contributor_hash,ip_hash,created_at) VALUES(?,?,?,?)`)
+          .run(rec.fingerprint, rec.contributor_hash, rec.ip_hash || null, now()).changes > 0;
         if (isNew && existing) db.prepare(`UPDATE spider_patterns SET contributor_count=contributor_count+1 WHERE fingerprint=?`).run(rec.fingerprint);
+        // VERIFIED requires diversity on BOTH axes: ≥threshold distinct tokens AND ≥threshold distinct IPs.
+        // Rotating only the token from one machine no longer forges a verified badge (live attack #7).
+        const distinctIps = db.prepare(`SELECT COUNT(DISTINCT ip_hash) AS n FROM spider_contributions WHERE fingerprint=? AND ip_hash IS NOT NULL`).get(rec.fingerprint).n;
         const cc = db.prepare(`SELECT contributor_count FROM spider_patterns WHERE fingerprint=?`).get(rec.fingerprint).contributor_count;
-        if (cc >= verifyThreshold) db.prepare(`UPDATE spider_patterns SET verified=1 WHERE fingerprint=?`).run(rec.fingerprint);
+        if (cc >= verifyThreshold && distinctIps >= verifyThreshold)
+          db.prepare(`UPDATE spider_patterns SET verified=1 WHERE fingerprint=?`).run(rec.fingerprint);
         const row = db.prepare(`SELECT hit_count,contributor_count,verified FROM spider_patterns WHERE fingerprint=?`).get(rec.fingerprint);
-        return { action, ...row, verified: !!row.verified };
+        return { action, ...row, verified: !!row.verified, distinct_ips: distinctIps };
       });
       return tx();
     },

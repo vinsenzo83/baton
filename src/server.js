@@ -100,9 +100,17 @@ server.tool("baton_verify",
 if (process.env.BATON_HTTP === "1") {
   const { StreamableHTTPServerTransport } = await import("@modelcontextprotocol/sdk/server/streamableHttp.js");
   const express = (await import("express")).default;
+  const { rateLimit, startSweeper, clientIp } = await import("./ratelimit.js");
+  const { codeHash } = await import("./crypto.js");
+  startSweeper();
   const app = express();
-  app.use(express.json({ limit: "1mb" }));
+  app.set("trust proxy", true);
+  app.use(express.json({ limit: "256kb" }));  // tighter cap — DoS surface
   app.get("/health", (_q, r) => r.json({ ok: true, name: "baton", version: "0.1.0" }));
+  // Rate limits: writes are cheap to abuse, so cap them per-IP. Reads a bit looser.
+  const rlWrite = rateLimit({ windowMs: 60_000, max: 30 });
+  const rlRead = rateLimit({ windowMs: 60_000, max: 120 });
+  const rlMcp = rateLimit({ windowMs: 60_000, max: 240 });
 
   // ── Human-facing web dashboard (real-time inbox) ──
   // The code is the key: the server only decrypts for a request that supplies the code.
@@ -112,29 +120,31 @@ if (process.env.BATON_HTTP === "1") {
   app.use(express.static(pub));
   const api = (fn) => (req, res) => { try { res.json(fn(req.body || {})); }
     catch (e) { res.status(400).json({ error: String(e.message || e) }); } };
-  app.post("/api/create", api((b) => core.createRoom(b)));
-  app.post("/api/join",   api((b) => core.join(b)));
-  app.post("/api/who",    api((b) => core.who(b)));
-  app.post("/api/send",   api((b) => core.send(b)));
-  app.post("/api/inbox",  api((b) => core.inboxRaw(b)));
+  app.post("/api/create", rlWrite, api((b) => core.createRoom(b)));
+  app.post("/api/join",   rlWrite, api((b) => core.join(b)));
+  app.post("/api/who",    rlRead,  api((b) => core.who(b)));
+  app.post("/api/send",   rlWrite, api((b) => core.send(b)));
+  app.post("/api/inbox",  rlRead,  api((b) => core.inboxRaw(b)));
 
   // ── Shared spider corpus (M2-2), same shape spider_* tools speak (/v1/patterns) ──
   const { preparePattern } = await import("./corpus-scrub.js");
   const SALT = process.env.SPIDER_SALT || "baton-default-salt";
-  app.post("/v1/patterns", (req, res) => {
+  app.post("/v1/patterns", rlWrite, (req, res) => {
     const token = (req.headers.authorization || "").replace(/^Bearer\s+/i, "").trim() || "anon";
     const prep = preparePattern(req.body || {}, { contributorToken: token, projectId: (req.body || {}).projectId, salt: SALT });
     if (!prep.ok) return res.status(422).json({ error: "rejected by scrub", reason: prep.reason });
+    // Bind the contribution to the source IP (hashed) so verified needs real machine diversity.
+    prep.record.ip_hash = codeHash(SALT + ":" + clientIp(req)).slice(0, 32);
     const r = store.upsertPattern(prep.record);
-    res.json({ stored: true, action: r.action, hit_count: r.hit_count, contributor_count: r.contributor_count, verified: r.verified, fingerprint: prep.record.fingerprint });
+    res.json({ stored: true, action: r.action, hit_count: r.hit_count, contributor_count: r.contributor_count, distinct_ips: r.distinct_ips, verified: r.verified, fingerprint: prep.record.fingerprint });
   });
-  app.get("/v1/patterns", (req, res) => {
+  app.get("/v1/patterns", rlRead, (req, res) => {
     const tags = (req.query.tags || "").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
     const patterns = store.queryPatterns({ tags, klass: req.query.class, limit: Number(req.query.limit || 50) });
     res.json({ count: patterns.length, patterns });
   });
   // Stateless: a fresh server+transport per POST (SDK's stateless pattern).
-  app.post("/mcp", async (req, res) => {
+  app.post("/mcp", rlMcp, async (req, res) => {
     const server = buildServer();
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     res.on("close", () => { transport.close(); server.close(); });
