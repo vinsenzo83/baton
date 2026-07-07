@@ -1,0 +1,116 @@
+// BATON core — transport-independent business logic. server.js wires these to MCP tools.
+// Design decisions baked in from the architecture review:
+//  - inbound content is fenced as untrusted data (C1) and secret-scrubbed (C4)
+//  - codes carry ≥128 bits; bodies are code-sealed so the server never sees plaintext (C2/C4)
+//  - one-time handoff redemption is atomic in the store (H4)
+//  - VERIFIED requires observed E2E evidence, never static-only (user's hard-won lesson)
+import { roomCode, handoffCode, normalizeCode } from "./ids.js";
+import { fenceUntrusted, injectionFlags, scrubSecrets } from "./prompt-guard.js";
+import { sealBody } from "./crypto.js";
+
+const HOUR = 3600_000;
+
+export function makeCore(store) {
+  return {
+    // ---------- RELAY ----------
+    createRoom({ name, ttl_hours = 72 } = {}) {
+      const code = roomCode();
+      store.createRoom(code, name, ttl_hours * HOUR);
+      return { code, name: name || null, expires_in_hours: ttl_hours,
+        share: `이 코드를 아는 세션만 입장합니다: ${code}` };
+    },
+
+    join({ code, alias, model } = {}) {
+      code = normalizeCode(code);
+      if (!alias) throw new Error("alias(방 안에서 쓸 별명)가 필요합니다.");
+      const room = store.getRoom(code);
+      if (!room) throw new Error("코드가 유효하지 않거나 만료되었습니다.");
+      if (/^(spider|거미|baton|system|보스|admin)$/i.test(alias) || store.aliasTaken(room.code_hash, alias))
+        throw new Error(`별명 '${alias}'은 예약되었거나 이미 사용 중입니다.`);
+      const m = store.join(code, alias, model);
+      return { member_id: m.id, alias, hint: "baton_send / baton_inbox 에 이 member_id를 사용하세요." };
+    },
+
+    send({ code, member_id, to, text } = {}) {
+      code = normalizeCode(code);
+      const room = store.getRoom(code);
+      if (!room) throw new Error("코드가 유효하지 않거나 만료되었습니다.");
+      const me = store.members(room.code_hash).find((x) => x.id === member_id);
+      if (!me) throw new Error("member_id가 이 방에 없습니다. 먼저 baton_join 하세요.");
+      const { text: clean, redactions } = scrubSecrets(String(text || ""));
+      const seq = store.send(code, room.code_hash, member_id, me.alias, to, clean);
+      return { seq, from: me.alias, to: to || "(all)", redactions };
+    },
+
+    inbox({ code, member_id, since = 0 } = {}) {
+      code = normalizeCode(code);
+      const room = store.getRoom(code);
+      if (!room) throw new Error("코드가 유효하지 않거나 만료되었습니다.");
+      const me = store.members(room.code_hash).find((x) => x.id === member_id);
+      if (!me) throw new Error("member_id가 이 방에 없습니다.");
+      const msgs = store.inbox(code, room.code_hash, me.alias, since);
+      const flagged = msgs.map((m) => ({ ...m, injection_flags: injectionFlags(m.text) }));
+      return {
+        count: msgs.length,
+        next_since: msgs.length ? msgs[msgs.length - 1].seq : since,
+        messages_fenced: fenceUntrusted("messages", flagged),
+      };
+    },
+
+    who({ code } = {}) {
+      code = normalizeCode(code);
+      const room = store.getRoom(code);
+      if (!room) throw new Error("코드가 유효하지 않거나 만료되었습니다.");
+      return { members: store.members(room.code_hash) };
+    },
+
+    // ---------- HANDOFF ----------
+    // The client model fills `snapshot` in the BATON Snapshot v1 shape. We scrub secrets,
+    // seal under a fresh code, and (optionally) attach a verification manifest.
+    pass({ snapshot, one_time = false, ttl_hours = 72, verify_manifest = null } = {}) {
+      if (!snapshot || !snapshot.context) throw new Error("snapshot.context 가 필요합니다 (BATON Snapshot v1).");
+      const raw = JSON.stringify(snapshot);
+      const { text: clean, redactions } = scrubSecrets(raw);
+      const code = handoffCode();
+      const meta = {
+        title: snapshot.meta?.title || "untitled",
+        author: snapshot.meta?.author || "unknown",
+        source_model: snapshot.meta?.source_model || "unknown",
+        project: snapshot.meta?.project || null,
+      };
+      // seal the (scrubbed) body under the code — server stores ciphertext only
+      const sealed = sealBody(code, clean);
+      const verified = verify_manifest?.verdict === "verified" ? 1 : 0;
+      store.putSnapshot(code, meta, sealed, {
+        oneTime: one_time, ttlMs: ttl_hours * HOUR, verified, manifest: verify_manifest,
+      });
+      return {
+        code, one_time, expires_in_hours: ttl_hours, secrets_redacted: redactions,
+        verified: !!verified,
+        badge: verified ? "🕸️ VERIFIED (E2E 관측 증거 포함)" : "⚪ UNVERIFIED (baton_verify 미실행 또는 static-only)",
+        share: `받는 쪽에서 baton_receive 로 이어받습니다: ${code}`,
+      };
+    },
+
+    receive({ code } = {}) {
+      code = normalizeCode(code);
+      const snap = store.takeSnapshot(code);
+      if (!snap) throw new Error("핸드오프 코드가 유효하지 않거나, 만료됐거나, 이미 1회용으로 소비되었습니다.");
+      const body = JSON.parse(snap.body);
+      const badge = snap.verified
+        ? `🕸️ VERIFIED — ${snap.manifest?.method || "e2e"} 증거 대조 통과`
+        : "⚪ UNVERIFIED — 이 스냅샷의 완료 주장은 수신측에서 재검증(baton_verify)을 권장합니다.";
+      return {
+        badge, meta: snap.meta, verify_manifest: snap.manifest,
+        context_fenced: fenceUntrusted("handoff snapshot", body),
+        next: "수신측 거미 재검증을 원하면 baton_verify 를 실행하세요 (수신자측 대조가 진짜 신뢰 지점).",
+      };
+    },
+
+    revoke({ code } = {}) {
+      code = normalizeCode(code);
+      const ok = store.revoke(code);
+      return { revoked: ok, note: ok ? "코드 파기 — 복호 불가(crypto-shred)." : "해당 코드를 찾지 못했습니다." };
+    },
+  };
+}
