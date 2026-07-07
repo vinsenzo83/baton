@@ -103,6 +103,20 @@ if (process.env.BATON_HTTP === "1") {
   const app = express();
   app.use(express.json({ limit: "1mb" }));
   app.get("/health", (_q, r) => r.json({ ok: true, name: "baton", version: "0.1.0" }));
+
+  // ── Human-facing web dashboard (real-time inbox) ──
+  // The code is the key: the server only decrypts for a request that supplies the code.
+  const { dirname, join } = await import("node:path");
+  const { fileURLToPath } = await import("node:url");
+  const pub = join(dirname(fileURLToPath(import.meta.url)), "..", "public");
+  app.use(express.static(pub));
+  const api = (fn) => (req, res) => { try { res.json(fn(req.body || {})); }
+    catch (e) { res.status(400).json({ error: String(e.message || e) }); } };
+  app.post("/api/create", api((b) => core.createRoom(b)));
+  app.post("/api/join",   api((b) => core.join(b)));
+  app.post("/api/who",    api((b) => core.who(b)));
+  app.post("/api/send",   api((b) => core.send(b)));
+  app.post("/api/inbox",  api((b) => core.inboxRaw(b)));
   // Stateless: a fresh server+transport per POST (SDK's stateless pattern).
   app.post("/mcp", async (req, res) => {
     const server = buildServer();

@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex">
+<title>BATON — 실시간 방</title>
+<style>
+:root{
+  --bg:#0e1014;--surface:#171a20;--surface2:#20242c;--line:#2a2f38;
+  --ink:#eef1f5;--ink2:#9aa2ad;--accent:#ff7a2f;--accent2:#e8590c;
+  --mine:#ff7a2f;--theirs:#252a33;--ok:#51cf66;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font-family:"Apple SD Gothic Neo","Pretendard","Noto Sans KR",-apple-system,BlinkMacSystemFont,sans-serif;line-height:1.5;height:100vh;display:flex;flex-direction:column}
+.mono{font-family:ui-monospace,"SF Mono",Menlo,monospace}
+a{color:var(--accent)}
+
+/* header */
+.top{display:flex;align-items:center;gap:12px;padding:12px 18px;border-bottom:1px solid var(--line);background:var(--surface)}
+.brand{font-weight:900;letter-spacing:1px;color:var(--accent)}
+.brand .b{background:var(--accent);color:#0e1014;border-radius:7px;padding:1px 7px;transform:rotate(-2deg);display:inline-block}
+.rmeta{font-size:12.5px;color:var(--ink2);margin-left:auto;text-align:right}
+.rmeta .code{color:var(--ink);font-weight:700}
+.copy{cursor:pointer;border:1px solid var(--line);background:var(--surface2);color:var(--ink2);border-radius:7px;padding:3px 9px;font-size:11px;margin-left:6px}
+.copy:hover{border-color:var(--accent)}
+
+/* gate (entry) */
+.gate{margin:auto;max-width:400px;width:100%;padding:26px}
+.gate h1{font-size:23px;font-weight:900;margin-bottom:6px}
+.gate h1 .b{background:var(--accent);color:#0e1014;border-radius:9px;padding:0 8px;transform:rotate(-2deg);display:inline-block}
+.gate p{color:var(--ink2);font-size:14px;margin-bottom:20px}
+.gate label{display:block;font-size:12px;color:var(--ink2);margin:14px 0 5px;font-weight:600}
+.gate input{width:100%;background:var(--surface2);border:1px solid var(--line);border-radius:10px;padding:12px 14px;color:var(--ink);font-size:15px;font-family:inherit}
+.gate input:focus{outline:none;border-color:var(--accent)}
+.gate input.mono{letter-spacing:.5px}
+.btn{width:100%;margin-top:18px;background:var(--accent);color:#0e1014;border:0;border-radius:10px;padding:13px;font-size:15px;font-weight:800;cursor:pointer;font-family:inherit}
+.btn:hover{background:var(--accent2)}
+.btn.ghost{background:transparent;border:1px solid var(--line);color:var(--ink2);margin-top:10px}
+.err{color:#ff6b6b;font-size:13px;margin-top:12px;min-height:18px}
+.tabs{display:flex;gap:6px;margin-bottom:8px}
+.tab{flex:1;text-align:center;padding:8px;border:1px solid var(--line);border-radius:8px;font-size:13px;cursor:pointer;color:var(--ink2)}
+.tab.on{border-color:var(--accent);color:var(--accent);font-weight:700}
+
+/* chat */
+.chat{flex:1;display:none;flex-direction:column;overflow:hidden}
+.chat.on{display:flex}
+.who{padding:8px 18px;border-bottom:1px solid var(--line);font-size:12px;color:var(--ink2);display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.pill{background:var(--surface2);border:1px solid var(--line);border-radius:99px;padding:2px 10px;font-size:11.5px}
+.pill .dot{color:var(--ok)}
+.stream{flex:1;overflow-y:auto;padding:18px;display:flex;flex-direction:column;gap:10px}
+.msg{max-width:74%;padding:9px 13px;border-radius:14px;font-size:14px;word-break:break-word}
+.msg .m-from{font-size:11px;color:var(--ink2);margin-bottom:3px;font-weight:700}
+.msg.mine{align-self:flex-end;background:var(--mine);color:#0e1014;border-bottom-right-radius:4px}
+.msg.mine .m-from{color:#0e1014;opacity:.7}
+.msg.theirs{align-self:flex-start;background:var(--theirs);border-bottom-left-radius:4px}
+.msg.sys{align-self:center;font-size:11.5px;color:var(--ink2);background:none}
+.msg .m-time{font-size:10px;opacity:.6;margin-top:2px}
+.compose{display:flex;gap:9px;padding:12px 16px;border-top:1px solid var(--line);background:var(--surface)}
+.compose input{flex:1;background:var(--surface2);border:1px solid var(--line);border-radius:10px;padding:11px 14px;color:var(--ink);font-size:14px;font-family:inherit}
+.compose input:focus{outline:none;border-color:var(--accent)}
+.compose button{background:var(--accent);color:#0e1014;border:0;border-radius:10px;padding:0 18px;font-weight:800;cursor:pointer;font-family:inherit}
+.to-sel{background:var(--surface2);border:1px solid var(--line);border-radius:10px;color:var(--ink);padding:0 10px;font-size:13px;font-family:inherit}
+.leave{cursor:pointer;color:var(--ink2);font-size:12px;text-decoration:underline}
+</style>
+</head>
+<body>
+
+<!-- GATE -->
+<div class="gate" id="gate">
+  <h1><span class="b">BATON</span> 실시간 방</h1>
+  <p>방 코드로 들어가면 쪽지가 실시간으로 뜹니다. 말로 "확인해줘" 안 해도 됩니다.</p>
+  <div class="tabs">
+    <div class="tab on" id="tabJoin" onclick="mode('join')">코드로 입장</div>
+    <div class="tab" id="tabNew" onclick="mode('new')">새 방 만들기</div>
+  </div>
+  <div id="joinFields">
+    <label>방 코드 (BTN-R-…)</label>
+    <input id="code" class="mono" placeholder="BTN-R-XXXX-XXXX-…" autocomplete="off">
+  </div>
+  <div id="newFields" style="display:none">
+    <label>방 이름 (선택)</label>
+    <input id="rname" placeholder="예: 봉이-CMI 협업" autocomplete="off">
+  </div>
+  <label>내 별명</label>
+  <input id="alias" placeholder="예: 사장 / dev / 상대" autocomplete="off">
+  <button class="btn" id="enter" onclick="enter()">입장</button>
+  <div class="err" id="err"></div>
+</div>
+
+<!-- CHAT -->
+<div class="top" id="top" style="display:none">
+  <span class="brand"><span class="b">B</span> BATON</span>
+  <span class="rmeta"><span id="rname2"></span> · <span class="code mono" id="rcode"></span>
+    <button class="copy" onclick="copyCode()">코드 복사</button>
+    <span class="leave" onclick="leave()" style="margin-left:10px">나가기</span></span>
+</div>
+<div class="chat" id="chat">
+  <div class="who" id="who"></div>
+  <div class="stream" id="stream"></div>
+  <div class="compose">
+    <select class="to-sel" id="to"><option value="">전체에게</option></select>
+    <input id="msg" placeholder="메시지를 입력…" onkeydown="if(event.key==='Enter')doSend()">
+    <button onclick="doSend()">보내기</button>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let S = JSON.parse(localStorage.getItem("baton") || "null");
+let since = 0, poll = null, seenMembers = new Set();
+
+const api = (path, body) => fetch("/api" + path, {
+  method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+}).then(async (r) => { const j = await r.json(); if (!r.ok || j.error) throw new Error(j.error || "요청 실패"); return j; });
+
+function mode(m) {
+  $("tabJoin").classList.toggle("on", m === "join");
+  $("tabNew").classList.toggle("on", m === "new");
+  $("joinFields").style.display = m === "join" ? "" : "none";
+  $("newFields").style.display = m === "new" ? "" : "none";
+  $("enter").textContent = m === "new" ? "방 만들고 입장" : "입장";
+  $("enter").dataset.mode = m;
+}
+
+async function enter() {
+  $("err").textContent = "";
+  const alias = $("alias").value.trim();
+  if (!alias) return $("err").textContent = "별명을 입력하세요.";
+  try {
+    let code, member_id;
+    if ($("enter").dataset.mode === "new") {
+      const r = await api("/create", { name: $("rname").value.trim() || undefined, alias });
+      code = r.code; member_id = r.member_id;
+    } else {
+      code = $("code").value.trim();
+      if (!code) return $("err").textContent = "방 코드를 입력하세요.";
+      const r = await api("/join", { code, alias });
+      member_id = r.member_id;
+    }
+    S = { code, member_id, alias, rname: $("rname").value.trim() };
+    localStorage.setItem("baton", JSON.stringify(S));
+    start();
+  } catch (e) { $("err").textContent = e.message; }
+}
+
+async function start() {
+  $("gate").style.display = "none";
+  $("top").style.display = "flex";
+  $("chat").classList.add("on");
+  $("rcode").textContent = S.code;
+  $("rname2").textContent = S.rname || "방";
+  since = 0; $("stream").innerHTML = ""; seenMembers = new Set();
+  if ("Notification" in window && Notification.permission === "default") Notification.requestPermission();
+  await tick(); poll = setInterval(tick, 2500);
+}
+
+async function tick() {
+  try {
+    const w = await api("/who", { code: S.code });
+    renderWho(w.members || []);
+    const inb = await api("/inbox", { code: S.code, member_id: S.member_id, since });
+    for (const m of inb.messages || []) addMsg(m);
+    since = inb.next_since || since;
+  } catch (e) { /* transient */ }
+}
+
+function renderWho(members) {
+  $("who").innerHTML = "👥 " + members.map((m) =>
+    `<span class="pill"><span class="dot">●</span> ${esc(m.alias)} <span style="color:var(--ink2)">${esc(m.model||"")}</span></span>`).join("");
+  const to = $("to"); const cur = to.value;
+  to.innerHTML = '<option value="">전체에게</option>' + members.filter((m) => m.alias !== S.alias)
+    .map((m) => `<option value="${esc(m.alias)}">${esc(m.alias)} 에게</option>`).join("");
+  to.value = cur;
+}
+
+function addMsg(m) {
+  const mine = m.from === S.alias;
+  const d = document.createElement("div");
+  d.className = "msg " + (mine ? "mine" : "theirs");
+  const to = m.to ? ` → ${esc(m.to)}` : "";
+  d.innerHTML = `<div class="m-from">${esc(m.from)}${to}</div>${esc(m.text)}<div class="m-time">${time(m.at)}</div>`;
+  $("stream").appendChild(d);
+  $("stream").scrollTop = $("stream").scrollHeight;
+  if (!mine && document.hidden && "Notification" in window && Notification.permission === "granted")
+    new Notification(`BATON · ${m.from}`, { body: m.text });
+}
+
+async function doSend() {
+  const text = $("msg").value.trim(); if (!text) return;
+  $("msg").value = "";
+  try { await api("/send", { code: S.code, member_id: S.member_id, to: $("to").value || undefined, text }); await tick(); }
+  catch (e) { $("err").textContent = e.message; }
+}
+
+function leave() { clearInterval(poll); localStorage.removeItem("baton"); location.reload(); }
+function copyCode() { navigator.clipboard.writeText(S.code); }
+function esc(s) { return String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+function time(t) { const d = new Date(t); return d.toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" }); }
+
+$("enter").dataset.mode = "join";
+if (S && S.code && S.member_id) start();
+</script>
+</body>
+</html>
