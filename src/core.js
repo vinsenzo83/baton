@@ -42,13 +42,15 @@ function sanitizeTtl(t) {
 }
 
 export function makeCore(store) {
-  // Resolve the caller's plan from an API key (anonymous → free).
+  // Resolve the caller's plan from an API key. An UNREGISTERED key must NOT get its own
+  // quota bucket (that let anyone bypass the Free limit by rotating random keys) — it's
+  // treated as anonymous, sharing the single anon bucket. Only a registered account
+  // (created via the billing webhook) gets its own metered bucket.
   const acct = (apiKey) => {
     if (!apiKey) return { keyHash: null, plan: "free", limits: planOf("free").limits };
-    const keyHash = codeHash(apiKey);
-    const a = store.getAccount(keyHash);
-    const plan = a?.plan || "free";
-    return { keyHash, plan, org: a?.org || null, limits: planOf(plan).limits };
+    const a = store.getAccount(codeHash(apiKey));
+    if (!a) return { keyHash: null, plan: "free", limits: planOf("free").limits }; // unregistered → anon
+    return { keyHash: codeHash(apiKey), plan: a.plan, org: a.org || null, limits: planOf(a.plan).limits };
   };
 
   return {
@@ -57,7 +59,7 @@ export function makeCore(store) {
     account({ api_key } = {}) {
       const a = acct(api_key);
       const period = monthKey(Date.now());
-      const used = a.keyHash ? store.getUsage(a.keyHash, "snapshots", period) : 0;
+      const used = store.getUsage(a.keyHash || codeHash("anon:free"), "snapshots", period);
       const cap = a.limits.snapshotsPerMonth;
       return {
         plan: a.plan, org: a.org || undefined,
