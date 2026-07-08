@@ -149,9 +149,10 @@ export function makeCore(store) {
     // be re-issued. To add someone new, issue a fresh invite (baton_new_invite) and share it.
     createRoom({ name, alias, api_key, require_approval = false } = {}) {
       if (alias != null) alias = normalizeAlias(alias);
-      const a = acct(api_key);
+      // Owner identity = the api_key itself (no signup needed): owner_hash = codeHash(api_key).
+      const ownerHash = api_key ? codeHash(api_key) : null;
       const room_id = roomCode();                       // stable internal id (owner keeps this)
-      store.createTeamRoom(room_id, name || "", a.keyHash || null, !!require_approval);
+      store.createTeamRoom(room_id, name || "", ownerHash, !!require_approval);
       const invite = roomCode();                        // first invite code (shared, 72h)
       store.addInvite(codeHash(invite), room_id, 72 * HOUR);
       let member_id = null;
