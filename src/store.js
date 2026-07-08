@@ -41,6 +41,10 @@ export function openStore(path = "./data/baton.db") {
       invite_hash TEXT PRIMARY KEY, room_id TEXT, expires_at INTEGER, revoked INTEGER DEFAULT 0, created_at INTEGER
     );
     CREATE INDEX IF NOT EXISTS idx_invite_room ON invites(room_id);
+    -- handoffs that flowed through a room (auto-delivered) → owner can consolidate the whole room.
+    CREATE TABLE IF NOT EXISTS room_handoffs (
+      room_id TEXT, code TEXT, created_at INTEGER, PRIMARY KEY(room_id, code)
+    );
 
     -- shared spider corpus (M2-2). Only scrubbed, generalized techniques — never code/secrets.
     CREATE TABLE IF NOT EXISTS spider_patterns (
@@ -124,6 +128,13 @@ export function openStore(path = "./data/baton.db") {
     },
     revokeInvitesForRoom(roomId) {
       db.prepare(`UPDATE invites SET revoked=1 WHERE room_id=?`).run(roomId);
+    },
+    // remember a handoff that flowed through a room, and list them for consolidation.
+    addRoomHandoff(roomId, code) {
+      try { db.prepare(`INSERT OR IGNORE INTO room_handoffs(room_id,code,created_at) VALUES(?,?,?)`).run(roomId, code, now()); } catch { /* ignore */ }
+    },
+    roomHandoffCodes(roomId) {
+      return db.prepare(`SELECT code FROM room_handoffs WHERE room_id=? ORDER BY created_at`).all(roomId).map((r) => r.code);
     },
     // ---- members (room_id based) ----
     memberCount(roomId, windowMs = 180_000) {

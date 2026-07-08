@@ -146,8 +146,10 @@ server.tool("baton_revoke", "방/핸드오프 코드를 즉시 파기한다(cryp
 
 // ───────────────────────── VERIFY (spider gate) ─────────────────────────
 server.tool("baton_consolidate",
-  "여러 부서/전문가의 핸드오프를 한 결과 보드로 취합한다. 각 결과의 검증 티어(독립검증 🕸️ / 자가증명 🔏 / 미검증 ⚪)와 '누가 검증했나'를 한눈에 — 사람이 최종 판단하는 결정판(AI 자동 승인 아님).",
-  { codes: z.array(z.string()).describe("취합할 핸드오프 코드(BTN-H-…) 목록") },
+  "여러 핸드오프를 한 결과 보드로 취합한다. 검증 티어(🕸️독립/🔏자가/⚪미검증)와 '누가 검증했나'를 한눈에. codes[]로 직접 넣거나, room_id+api_key를 주면 그 방에 흘러온 핸드오프를 방장이 통째로 취합(코드 복붙 불필요).",
+  { codes: z.array(z.string()).optional().describe("취합할 핸드오프 코드(BTN-H-…) 목록"),
+    room_id: z.string().optional().describe("방장 모드 — 이 방의 모든 핸드오프 자동 취합"),
+    api_key: z.string().optional().describe("방장 계정 키(room_id와 함께)") },
   wrap((a) => core.consolidate(a)));
 
 server.tool("baton_verify_plan",

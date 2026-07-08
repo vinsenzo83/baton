@@ -122,6 +122,7 @@ a{color:var(--accent)}
 <div id="ownerbar" style="display:none;align-items:center;gap:12px;flex-wrap:wrap;padding:8px 18px;border-bottom:1px solid var(--line);background:rgba(255,106,26,.06);font-size:12.5px">
   <span style="color:var(--accent);font-weight:700">방장</span>
   <button onclick="newInvite()" style="background:var(--accent);color:#160a03;border:0;border-radius:8px;padding:5px 12px;font-weight:700;cursor:pointer;font-size:12px">🔑 새 초대코드 발급</button>
+  <button onclick="roomBoard()" style="background:transparent;color:var(--accent);border:1px solid var(--accent);border-radius:8px;padding:5px 12px;font-weight:700;cursor:pointer;font-size:12px">📊 이 방 결과 취합</button>
   <button onclick="closeRoom()" style="background:transparent;color:#ff7a6b;border:1px solid #ff7a6b;border-radius:8px;padding:5px 12px;font-weight:700;cursor:pointer;font-size:12px">🗑 방 닫기</button>
   <span style="color:var(--ink3)">참가자 옆 ✕ 내보내기 · ✓ 승인</span>
   <span id="ownermsg" style="color:var(--ok)"></span>
@@ -290,6 +291,11 @@ async function closeRoom() {
     await api("/close_room", { room_id: S.room_id, api_key: S.api_key });
     clearInterval(poll); localStorage.removeItem("baton"); location.reload();   // room is gone → back to gate
   } catch (e) { $("ownermsg").textContent = e.message; }
+}
+// open the result board pre-loaded with THIS room's handoffs (owner mode)
+function roomBoard() {
+  const base = API_BASE || "";
+  window.open(base + "/board.html?room=" + encodeURIComponent(S.room_id) + "&key=" + encodeURIComponent(S.api_key), "_blank");
 }
 
 function addMsg(m) {

@@ -338,6 +338,7 @@ export function makeCore(store) {
           if (m && m.approved) {
             store.send(m.room_id, member_id, m.alias, null,
               `🏃 New baton: ${code}  ${badge} — receive with baton_receive`);
+            store.addRoomHandoff(m.room_id, code);   // remember for "consolidate this room"
             delivered_to = m.room_id;
           }
         } catch { /* best-effort; the code is still returned below */ }
@@ -396,8 +397,10 @@ export function makeCore(store) {
     // Gather several departments' handoffs into ONE result board a HUMAN reads and judges.
     // Not AI-automatic: it surfaces each dept's work + its verification tier so a person can
     // see at a glance what's independently verified vs only self-attested vs unverified.
-    consolidate({ codes = [] } = {}) {
-      if (!Array.isArray(codes) || codes.length === 0) throw new Error("codes[] is required (the handoff codes to consolidate).");
+    consolidate({ codes = [], room_id, api_key } = {}) {
+      // Room mode: owner consolidates every handoff that flowed through their room (no manual codes).
+      if (room_id) { ownerOf(room_id, api_key); codes = store.roomHandoffCodes(room_id); }
+      if (!Array.isArray(codes) || codes.length === 0) throw new Error(room_id ? "No handoffs in this room yet — pass a baton into it first." : "codes[] is required (the handoff codes to consolidate).");
       // C2 DoS fix: each code costs a scrypt (decrypt). Cap the count and DEDUPE so repeating one
       // code can't amplify CPU. 50 is plenty for a human decision board.
       if (codes.length > 50) throw new Error("Too many codes (max 50 per board).");

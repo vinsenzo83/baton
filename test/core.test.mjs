@@ -373,4 +373,18 @@ core.setPlan({ api_key: "tkey", plan: "pro" });   // unlimited key for handoff t
   ok("pentest fixes: who hides ids · approval gates reads · alias XSS stripped");
 }
 
-console.log(`\n🕸️  BATON: ${pass}/21 groups passed\n`);
+// 22. room → board: handoffs passed into a room are consolidatable by the owner (no manual codes)
+{
+  core.signup({ api_key: "rb-owner-1" });
+  const room = core.createRoom({ name: "rb", alias: "lead", api_key: "rb-owner-1" });
+  const p = core.pass({ api_key: "rb-owner-1", member_id: room.member_id,
+    snapshot: { meta: { title: "결제모듈" }, context: { goal: "3사 통합" } } });
+  assert.equal(p.delivered_to, room.room_id);           // auto-delivered + remembered
+  const board = core.consolidate({ room_id: room.room_id, api_key: "rb-owner-1" });
+  assert.equal(board.departments.length, 1);            // owner consolidates the whole room
+  assert.equal(board.departments[0].title, "결제모듈");
+  assert.throws(() => core.consolidate({ room_id: room.room_id, api_key: "nope" }), /owner/);  // owner-only
+  ok("room→board: pass into room → owner consolidates the whole room (no manual codes)");
+}
+
+console.log(`\n🕸️  BATON: ${pass}/22 groups passed\n`);

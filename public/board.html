@@ -106,15 +106,18 @@ function badgeText(d){
   return "⚪ UNVERIFIED";
 }
 
-async function run(){
+async function run(payload){
   $("err").textContent = "";
-  const raw = $("codes").value.trim();
-  const codes = raw.split(/[\n,]+/).map((s) => s.trim()).filter(Boolean);
-  if (!codes.length){ $("err").textContent = "핸드오프 코드를 하나 이상 넣으세요."; return; }
+  let body = payload;
+  if (!body){
+    const codes = $("codes").value.trim().split(/[\n,]+/).map((s) => s.trim()).filter(Boolean);
+    if (!codes.length){ $("err").textContent = "핸드오프 코드를 하나 이상 넣으세요."; return; }
+    body = { codes };
+  }
   $("go").disabled = true; $("go").textContent = "취합 중…";
   try{
     const r = await fetch(API + "/api/consolidate", {
-      method:"POST", headers:{"content-type":"application/json"}, body:JSON.stringify({ codes }),
+      method:"POST", headers:{"content-type":"application/json"}, body:JSON.stringify(body),
     });
     const data = await r.json();
     if (data.error){ $("err").textContent = data.error; return; }
@@ -122,6 +125,12 @@ async function run(){
   }catch(e){ $("err").textContent = "요청 실패: " + e.message; }
   finally{ $("go").disabled = false; $("go").textContent = "결과 취합"; }
 }
+// Room mode: /board.html?room=BTN-R-…&key=api_key → owner auto-consolidates their room.
+(function(){
+  const q = new URLSearchParams(location.search);
+  const room = q.get("room"), key = q.get("key");
+  if (room && key) run({ room_id: room, api_key: key });
+})();
 
 function render(b){
   const cls = /독립|independently verified/.test(b.trust) && !/⚠/.test(b.trust) ? "ok" : "warn";
