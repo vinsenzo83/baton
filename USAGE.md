@@ -53,7 +53,24 @@ claude mcp add --scope user --transport http baton https://baton-mcp-production.
 ```json
 { "mcpServers": { "baton": { "url": "https://baton-mcp-production.up.railway.app/mcp" } } }
 ```
-Confirm with: *"list the baton tools"* — you should see 10 `baton_*` + 6 `spider_*`. Start a **new session** after registering so the tools load.
+Confirm with: *"list the baton tools"* — you should see the `baton_*` + `spider_*` tools. Start a **new session** after registering so the tools load.
+
+### Is it connected? (nothing extra to install)
+Once you've registered BATON, your AI client shows it for you — you don't run anything:
+- **Claude Code / MCP clients** — the registered server appears in the client's UI **automatically and stays visible** (e.g. `baton` in the MCP list / bottom status). You don't have to type a command; registering once is enough. To check explicitly: `claude mcp list` (shows `baton ✓ Connected`) or `/mcp` in-session.
+- **Web dashboard** — a **bottom status bar** shows 🟢 Connected · room code · live session count · your name (turns red “Reconnecting…” if the connection drops). Nothing to install; it's on the chat screen.
+- **Anytime, in a room** — ask *"who's in the baton room?"* → `baton_who` lists every participant (alias, model, last seen).
+
+### Ending / leaving (three levels)
+| You want to… | Do this | Effect |
+|---|---|---|
+| **Leave a room** (step out, room stays) | *"leave the baton room"* → `baton_leave` · dashboard **Leave** button | Frees your seat immediately; others stay |
+| **Close a room** (owner, end it for all) | *"revoke the baton room"* → `baton_revoke` | Crypto-shreds it — nobody can open it again, even with the code |
+| **Cancel a handoff** (before it's received) | *"revoke baton BTN-H-…"* → `baton_revoke` | Shreds that capsule; the receiver can't open it |
+| **Let it expire on its own** | do nothing | Rooms/handoffs auto-delete after their TTL (default **72h**; set `ttl_hours` when creating) |
+| **Remove BATON from a client** | `claude mcp remove baton` | Unregisters the tools; re-add anytime with `claude mcp add` |
+
+One-time handoffs (*"pass a one-time baton"*) self-destruct the moment they're received — no cleanup needed.
 
 ---
 
