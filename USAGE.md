@@ -57,7 +57,7 @@ Confirm with: *"list the baton tools"* — you should see the `baton_*` + `spide
 
 ### Is it connected? (nothing extra to install)
 Once you've registered BATON, your AI client shows it for you — you don't run anything:
-- **Claude Code / MCP clients** — the registered server appears in the client's UI **automatically and stays visible** (e.g. `baton` in the MCP list / bottom status). You don't have to type a command; registering once is enough. To check explicitly: `claude mcp list` (shows `baton ✓ Connected`) or `/mcp` in-session.
+- **Claude Code / MCP clients** — check with `claude mcp list` (shows `baton ✓ Connected`) or `/mcp` in-session. *(Optional)* a per-session status-line indicator is available via the hook + segment in `bin/baton-hook.mjs` / `bin/baton-status.mjs`: it shows a dim `○ baton` (installed, MCP is user-scope so every session shows it) and a colored `🏃 baton <room> · N명` only in the session that actually joined a room — so a session never looks connected to a room it isn't in.
 - **Web dashboard** — a **bottom status bar** shows 🟢 Connected · room code · live session count · your name (turns red “Reconnecting…” if the connection drops). Nothing to install; it's on the chat screen.
 - **Anytime, in a room** — ask *"who's in the baton room?"* → `baton_who` lists every participant (alias, model, last seen).
 
@@ -181,6 +181,9 @@ each other, and the company sees a trustworthy consolidated result — with a hu
 | `baton_verify` | target, verifier?, capsule?, environment?, static_checks?, e2e_evidence?, artifacts? | **signed Verification Receipt** |
 | `baton_consolidate` | codes[] | **result board** — depts' handoffs by trust tier |
 | `baton_signup` | api_key? | free account (gating off now) |
+| `baton_account` | api_key? | view plan / usage (billing off now) |
+| `baton_upgrade` | plan, api_key | *(billing off)* create a crypto invoice (USDT/USDC) |
+| `baton_confirm_payment` | invoice_id, chain, tx_hash, api_key | *(billing off)* verify on-chain payment |
 
 **Snapshot v1 shape:** `{ meta{title,author,source_model,project}, context{goal,current_state,decisions[{what,why}],constraints[]}, artifacts{files,links,commands}, next_steps[], warnings[] }`
 
