@@ -4,16 +4,7 @@
 // Usage: baton-watch <BTN-R-code> <member_id> [--name alias]
 //    or: baton-watch --join <BTN-R-code> --as <alias>   (joins then watches)
 import { execFile } from "node:child_process";
-import { platform, homedir } from "node:os";
-import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-
-// Shared status file the Claude Code statusLine reads → "🏃 baton · room · N connected".
-const STATUS_DIR = join(homedir(), ".baton");
-const STATUS_FILE = join(STATUS_DIR, "status.json");
-function writeStatus(s) {
-  try { mkdirSync(STATUS_DIR, { recursive: true }); writeFileSync(STATUS_FILE, JSON.stringify(s)); } catch { /* best-effort */ }
-}
+import { platform } from "node:os";
 
 const BASE = process.env.BATON_URL || "https://baton-mcp-production.up.railway.app";
 const args = process.argv.slice(2);
@@ -58,27 +49,21 @@ async function main() {
   const who = await post("/api/who", { code }).catch(() => ({ members: [] }));
   console.log(`${C.orange}▸ BATON${C.reset} watching ${C.bold}${code.slice(0, 14)}…${C.reset}  ${C.dim}(${who.members.length} in room, Ctrl+C to stop)${C.reset}\n`);
 
-  let since = 0, firstPass = true, unread = 0;
+  let since = 0, firstPass = true;
   async function tick() {
     try {
-      const w = await post("/api/who", { code }).catch(() => null);
       const inb = await post("/api/inbox", { code, member_id: memberId, since });
       for (const m of inb.messages || []) {
-        if (!firstPass) { notify(`BATON · ${m.from}`, m.text); unread++; }
+        if (!firstPass) notify(`BATON · ${m.from}`, m.text);
         const arrow = m.to ? ` → ${m.to}` : "";
         console.log(`${C.dim}${stamp()}${C.reset}  ${C.bold}${C.orange}${m.from}${C.reset}${C.dim}${arrow}${C.reset}  ${m.text}`);
       }
       since = inb.next_since || since;
       firstPass = false;
-      // publish status for the statusLine (members = who count, unread since watch start)
-      writeStatus({ room: code, members: w ? (w.members || []).length : null, unread, alias: alias || null, ts: Date.now() });
     } catch (e) { /* transient network */ }
   }
   await tick();
   setInterval(tick, 2500);
-  // clear status on exit so the statusLine doesn't show a stale room
-  const clear = () => { writeStatus({ ts: 0 }); process.exit(0); };
-  process.on("SIGINT", clear); process.on("SIGTERM", clear);
 }
 
 main().catch((e) => { console.error("Error:", e.message); process.exit(1); });
