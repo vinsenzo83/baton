@@ -114,6 +114,12 @@ a{color:var(--accent)}
     <button class="copy" id="t-copy" onclick="copyCode()">Copy code</button>
     <span class="leave" id="t-leave" onclick="leave()" style="margin-left:10px">Leave</span></span>
 </div>
+<div id="ownerbar" style="display:none;align-items:center;gap:12px;flex-wrap:wrap;padding:8px 18px;border-bottom:1px solid var(--line);background:rgba(255,106,26,.06);font-size:12.5px">
+  <span style="color:var(--accent);font-weight:700">방장</span>
+  <button onclick="newInvite()" style="background:var(--accent);color:#160a03;border:0;border-radius:8px;padding:5px 12px;font-weight:700;cursor:pointer;font-size:12px">🔑 새 초대코드 발급</button>
+  <span style="color:var(--ink3)">참가자 옆 ✕ 내보내기 · ✓ 승인</span>
+  <span id="ownermsg" style="color:var(--ok)"></span>
+</div>
 <div class="chat" id="chat">
   <div class="who" id="who"></div>
   <div class="stream" id="stream"></div>
@@ -188,19 +194,20 @@ async function enter() {
   const alias = $("alias").value.trim();
   if (!alias) return $("err").textContent = T().needAlias;
   try {
-    const api_key = $("acckey").value.trim() || undefined;   // 🔴1: owner's plan → room seats
+    const api_key = $("acckey").value.trim() || undefined;   // owner key → manage the room
     if (api_key) localStorage.setItem("baton_acckey", api_key);
-    let code, member_id;
+    let member_id, invite_code, room_id = null, is_owner = false;
     if ($("enter").dataset.mode === "new") {
       const r = await api("/create", { name: $("rname").value.trim() || undefined, alias, api_key });
-      code = r.code; member_id = r.member_id;
+      member_id = r.member_id; invite_code = r.invite_code; room_id = r.room_id; is_owner = true;
     } else {
-      code = $("code").value.trim();
-      if (!code) return $("err").textContent = T().needCode;
-      const r = await api("/join", { code, alias });
+      invite_code = $("code").value.trim();
+      if (!invite_code) return $("err").textContent = T().needCode;
+      const r = await api("/join", { code: invite_code, alias });
       member_id = r.member_id;
+      if (r.approved === false) return $("err").textContent = "입장 승인 대기 중 — 방장이 승인해야 참여됩니다.";
     }
-    S = { code, member_id, alias, rname: $("rname").value.trim() };
+    S = { member_id, alias, invite_code, room_id, is_owner, api_key, rname: $("rname").value.trim() };
     localStorage.setItem("baton", JSON.stringify(S));
     start();
   } catch (e) { $("err").textContent = e.message; }
@@ -210,12 +217,13 @@ async function start() {
   $("gate").style.display = "none";
   $("top").style.display = "flex";
   $("chat").classList.add("on");
-  $("rcode").textContent = S.code;
+  $("rcode").textContent = S.invite_code;
   $("rname2").textContent = S.rname || T().room;
+  $("ownerbar").style.display = S.is_owner ? "flex" : "none";
   since = 0; $("stream").innerHTML = ""; seenMembers = new Set();
   $("statusbar").classList.add("on");
-  $("sb-room").textContent = S.code;
-  $("sb-you").textContent = "You: " + S.alias;
+  $("sb-room").textContent = S.invite_code;
+  $("sb-you").textContent = "You: " + S.alias + (S.is_owner ? " (방장)" : "");
   if ("Notification" in window && Notification.permission === "default") Notification.requestPermission();
   await tick(); poll = setInterval(tick, 2500);
 }
@@ -229,22 +237,47 @@ function setConn(up, n) {
 
 async function tick() {
   try {
-    const w = await api("/who", { code: S.code });
+    const w = await api("/who", { member_id: S.member_id });
     renderWho(w.members || []);
-    setConn(true, (w.members || []).length);            // polling ok → connected + live count
-    const inb = await api("/inbox", { code: S.code, member_id: S.member_id, since });
+    setConn(true, (w.members || []).filter((m) => m.approved !== 0).length);
+    const inb = await api("/inbox", { member_id: S.member_id, since });
     for (const m of inb.messages || []) addMsg(m);
     since = inb.next_since || since;
   } catch (e) { setConn(false); }                        // poll failed → reconnecting
 }
 
 function renderWho(members) {
-  $("who").innerHTML = "👥 " + members.map((m) =>
-    `<span class="pill"><span class="dot">●</span> ${esc(m.alias)} <span style="color:var(--ink2)">${esc(m.model||"")}</span></span>`).join("");
+  $("who").innerHTML = "👥 " + members.map((m) => {
+    const pend = m.approved === 0 ? ` <span style="color:#ffc44d">(대기)</span>` : "";
+    const own = S.is_owner && m.id !== S.member_id;
+    const approve = own && m.approved === 0 ? ` <a onclick="approveMember('${m.id}')" style="cursor:pointer;color:var(--ok)" title="승인">✓</a>` : "";
+    const kick = own ? ` <a onclick="kickMember('${m.id}','${esc(m.alias)}')" style="cursor:pointer;color:#ff7a6b" title="내보내기">✕</a>` : "";
+    return `<span class="pill"><span class="dot">●</span> ${esc(m.alias)} <span style="color:var(--ink2)">${esc(m.model||"")}</span>${pend}${approve}${kick}</span>`;
+  }).join("");
   const to = $("to"); const cur = to.value;
-  to.innerHTML = `<option value="">${esc(T().everyone)}</option>` + members.filter((m) => m.alias !== S.alias)
+  to.innerHTML = `<option value="">${esc(T().everyone)}</option>` + members.filter((m) => m.alias !== S.alias && m.approved !== 0)
     .map((m) => `<option value="${esc(m.alias)}">${esc(T().toName(m.alias))}</option>`).join("");
   to.value = cur;
+}
+
+// ---- owner controls ----
+async function newInvite() {
+  try {
+    const r = await api("/new_invite", { room_id: S.room_id, api_key: S.api_key, revoke_old: false });
+    S.invite_code = r.invite_code; localStorage.setItem("baton", JSON.stringify(S));
+    $("rcode").textContent = r.invite_code; $("sb-room").textContent = r.invite_code;
+    navigator.clipboard.writeText(r.invite_code).catch(() => {});
+    $("ownermsg").textContent = "새 초대코드 복사됨 (72h) — 신규 인원에게 전달하세요";
+    setTimeout(() => { $("ownermsg").textContent = ""; }, 5000);
+  } catch (e) { $("ownermsg").textContent = e.message; }
+}
+async function kickMember(id, alias) {
+  try { await api("/kick", { room_id: S.room_id, api_key: S.api_key, target_member_id: id }); await tick(); }
+  catch (e) { $("ownermsg").textContent = e.message; }
+}
+async function approveMember(id) {
+  try { await api("/approve", { room_id: S.room_id, api_key: S.api_key, member_id: id }); await tick(); }
+  catch (e) { $("ownermsg").textContent = e.message; }
 }
 
 function addMsg(m) {
@@ -262,16 +295,16 @@ function addMsg(m) {
 async function doSend() {
   const text = $("msg").value.trim(); if (!text) return;
   $("msg").value = "";
-  try { await api("/send", { code: S.code, member_id: S.member_id, to: $("to").value || undefined, text }); await tick(); }
+  try { await api("/send", { member_id: S.member_id, to: $("to").value || undefined, text }); await tick(); }
   catch (e) { $("err").textContent = e.message; }
 }
 
 function leave() {
   clearInterval(poll);
-  if (S && S.code && S.member_id) api("/leave", { code: S.code, member_id: S.member_id }).catch(() => {}); // free the seat
+  if (S && S.member_id) api("/leave", { member_id: S.member_id }).catch(() => {});
   localStorage.removeItem("baton"); location.reload();
 }
-function copyCode() { navigator.clipboard.writeText(S.code); }
+function copyCode() { navigator.clipboard.writeText(S.invite_code); }
 function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
 function time(t) { const d = new Date(t); return d.toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" }); }
 
