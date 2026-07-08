@@ -50,8 +50,8 @@ Flip `verdict` to `"verified"` without re-signing and the badge is refused. A pa
 | Group | Tools | What it does |
 |---|---|---|
 | **Handoff** | `baton_pass` `baton_receive` `baton_diff` `baton_revoke` | Seal a work capsule into a code (`BTN-H-…`), hand it over, diff versions. Body encrypted with a code-derived key — the server never sees plaintext |
-| **Verify** | `baton_verify` `baton_verify_plan` + `spider_*` ×6 | Independent verifier replays and issues the signed receipt. No observation, no 🕸️ |
-| **Relay** *(supporting)* | `baton_create_room` `baton_join` `baton_send` `baton_inbox` `baton_who` `baton_leave` | Live sessions from different people/models talk in an invite-code room (`BTN-R-…`) |
+| **Verify** | `baton_verify` `baton_verify_plan` `baton_consolidate` + `spider_*` ×6 | Independent verifier replays and issues the signed receipt (no observation, no 🕸️); `consolidate` gathers many handoffs into one result board by trust tier |
+| **Team rooms** *(supporting)* | `baton_create_room` `baton_new_invite` `baton_join` `baton_send` `baton_inbox` `baton_who` `baton_leave` `baton_kick` `baton_approve` `baton_close_room` | A persistent room the owner manages; people enter via rotating **invite codes** (`BTN-R-…`, 72h, re-issuable). Owner can kick, approve (optional gate), close. After join, activity is keyed by `member_id` |
 
 ## Design principles (from the security review)
 
@@ -75,7 +75,7 @@ BATON_HTTP=1 PORT=8080 node src/server.js      # remote Streamable HTTP
 claude mcp add --transport http baton https://baton-mcp-production.up.railway.app/mcp
 ```
 
-Billing/gating is **off by default** (dogfooding phase). Set `BATON_BILLING=on` to re-enable quotas/seats. See **[USAGE.md](USAGE.md)** for the full guide.
+Billing/gating is **off by default** (dogfooding phase). Set `BATON_BILLING=on` to re-enable quotas. See **[USAGE.md](USAGE.md)** for the full guide.
 
 ## Storage
 MVP uses SQLite (`better-sqlite3`) — self-host single binary. The hosted service drops a Postgres adapter into the narrow interface in `src/store.js`.

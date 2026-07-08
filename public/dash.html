@@ -104,7 +104,12 @@ a{color:var(--accent)}
   <button class="btn" id="enter" onclick="enter()">Enter</button>
   <div class="err" id="err"></div>
   <div id="t-pricing" style="margin-top:20px;padding-top:16px;border-top:1px solid var(--line);font-size:12px;color:var(--ink2);line-height:1.7"></div>
-  <div style="margin-top:10px;font-size:12.5px"><a href="/board.html" style="color:var(--accent);text-decoration:none">📊 Result Board →</a> <span style="color:var(--ink3)">consolidate departments' verified handoffs</span></div>
+  <div style="margin-top:10px;font-size:12.5px">
+    <a href="https://eduverse-ai.app/baton-home" style="color:var(--accent);text-decoration:none">🏃 홈</a> ·
+    <a href="/board.html" style="color:var(--accent);text-decoration:none">📊 결과 보드</a> ·
+    <a href="https://eduverse-ai.app/baton-guide" style="color:var(--accent);text-decoration:none">📖 소개</a> ·
+    <a href="https://eduverse-ai.app/baton-tutorial" style="color:var(--accent);text-decoration:none">✅ 따라하기</a>
+  </div>
 </div>
 
 <!-- CHAT -->
@@ -117,6 +122,7 @@ a{color:var(--accent)}
 <div id="ownerbar" style="display:none;align-items:center;gap:12px;flex-wrap:wrap;padding:8px 18px;border-bottom:1px solid var(--line);background:rgba(255,106,26,.06);font-size:12.5px">
   <span style="color:var(--accent);font-weight:700">방장</span>
   <button onclick="newInvite()" style="background:var(--accent);color:#160a03;border:0;border-radius:8px;padding:5px 12px;font-weight:700;cursor:pointer;font-size:12px">🔑 새 초대코드 발급</button>
+  <button onclick="closeRoom()" style="background:transparent;color:#ff7a6b;border:1px solid #ff7a6b;border-radius:8px;padding:5px 12px;font-weight:700;cursor:pointer;font-size:12px">🗑 방 닫기</button>
   <span style="color:var(--ink3)">참가자 옆 ✕ 내보내기 · ✓ 승인</span>
   <span id="ownermsg" style="color:var(--ok)"></span>
 </div>
@@ -278,6 +284,12 @@ async function kickMember(id, alias) {
 async function approveMember(id) {
   try { await api("/approve", { room_id: S.room_id, api_key: S.api_key, member_id: id }); await tick(); }
   catch (e) { $("ownermsg").textContent = e.message; }
+}
+async function closeRoom() {
+  try {
+    await api("/close_room", { room_id: S.room_id, api_key: S.api_key });
+    clearInterval(poll); localStorage.removeItem("baton"); location.reload();   // room is gone → back to gate
+  } catch (e) { $("ownermsg").textContent = e.message; }
 }
 
 function addMsg(m) {

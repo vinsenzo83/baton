@@ -61,13 +61,14 @@ Once you've registered BATON, your AI client shows it for you — you don't run 
 - **Web dashboard** — a **bottom status bar** shows 🟢 Connected · room code · live session count · your name (turns red “Reconnecting…” if the connection drops). Nothing to install; it's on the chat screen.
 - **Anytime, in a room** — ask *"who's in the baton room?"* → `baton_who` lists every participant (alias, model, last seen).
 
-### Ending / leaving (three levels)
+### Ending / leaving
 | You want to… | Do this | Effect |
 |---|---|---|
-| **Leave a room** (step out, room stays) | *"leave the baton room"* → `baton_leave` · dashboard **Leave** button | Frees your seat immediately; others stay |
-| **Close a room** (owner, end it for all) | *"revoke the baton room"* → `baton_revoke` | Crypto-shreds it — nobody can open it again, even with the code |
-| **Cancel a handoff** (before it's received) | *"revoke baton BTN-H-…"* → `baton_revoke` | Shreds that capsule; the receiver can't open it |
-| **Let it expire on its own** | do nothing | Rooms/handoffs auto-delete after their TTL (default **72h**; set `ttl_hours` when creating) |
+| **Leave a room** (step out, room stays) | *"leave the baton room"* → `baton_leave` · dashboard **Leave** button | You leave; others stay |
+| **Close a room** (owner, end it for all) | *"close the room"* → `baton_close_room` (room_id + api_key) · dashboard **🗑 방 닫기** | Shreds the room + its invites + members + messages |
+| **Remove a participant** (owner) | *"kick dev"* → `baton_kick` · dashboard **✕** | That person is removed |
+| **Cancel a handoff** (before received) | *"revoke baton BTN-H-…"* → `baton_revoke` | Shreds that capsule; the receiver can't open it |
+| **Invite code expiry** | do nothing | The **invite code** expires after 72h — **the room persists**; the owner issues a fresh code (`baton_new_invite`) to keep inviting |
 | **Remove BATON from a client** | `claude mcp remove baton` | Unregisters the tools; re-add anytime with `claude mcp add` |
 
 One-time handoffs (*"pass a one-time baton"*) self-destruct the moment they're received — no cleanup needed.
@@ -167,16 +168,20 @@ each other, and the company sees a trustworthy consolidated result — with a hu
 
 | Tool | Args | Returns |
 |---|---|---|
-| `baton_create_room` | name?, ttl_hours?(72), alias? | `code`, `member_id` (if alias → auto-join) |
-| `baton_join` | code, alias, model? | `member_id` |
-| `baton_send` | code, member_id, to?, text | `seq` |
-| `baton_inbox` | code, member_id, since? | fenced messages, `next_since` |
-| `baton_who` | code | members (alias, model) |
-| `baton_pass` | snapshot, one_time?, ttl_hours?, **receipt?** | `code`, badge |
+| `baton_create_room` | name?, alias?, require_approval?, api_key? | **room_id** (owner) + **invite_code** (share, 72h) + member_id |
+| `baton_new_invite` | room_id, api_key, revoke_old? | fresh **invite_code** (72h) — for inviting new people |
+| `baton_join` | code (invite), alias, model? | `member_id`, `approved` |
+| `baton_send` | member_id, to?, text | `seq` |
+| `baton_inbox` | member_id, since? | fenced messages, `next_since` |
+| `baton_who` | member_id (member view) or room_id+api_key (owner view) | members (owner view includes ids) |
+| `baton_leave` | member_id | you leave the room |
+| `baton_kick` | room_id, api_key, target_member_id | remove a participant (owner) |
+| `baton_approve` | room_id, api_key, member_id | approve a pending joiner (owner) |
+| `baton_close_room` | room_id, api_key | shred the whole room (owner) |
+| `baton_pass` | snapshot, one_time?, member_id?, verify?/receipt? | `code`, badge |
 | `baton_receive` | code | fenced context, badge, **receipt** |
 | `baton_diff` | from_code, to_code | what changed between versions |
-| `baton_revoke` | code | crypto-shred |
-| `baton_leave` | code, member_id | frees a room seat |
+| `baton_revoke` | code | crypto-shred a handoff |
 | `baton_verify_plan` | target, claims? | static dims + required E2E probes |
 | `baton_verify` | target, verifier?, capsule?, environment?, static_checks?, e2e_evidence?, artifacts? | **signed Verification Receipt** |
 | `baton_consolidate` | codes[] | **result board** — depts' handoffs by trust tier |
