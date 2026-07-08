@@ -27,6 +27,7 @@ function normalizeAlias(a) {
   return String(a ?? "")
     .normalize("NFKC")
     .replace(/[​-‍﻿]/g, "")   // zero-width
+    .replace(/['"<>`\\]/g, "")     // 🟡 XSS: strip quote/bracket/backtick/backslash (dash onclick handler)
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, 40);
@@ -204,6 +205,7 @@ export function makeCore(store) {
 
     inbox({ member_id, since = 0 } = {}) {
       const me = ctx(member_id);
+      if (!me.approved) throw new Error("You're not approved into the room yet.");   // 🟠 read gate
       store.touchMember(member_id);
       const msgs = store.inbox(me.room_id, me.alias, since);
       const flagged = msgs.map((m) => ({ ...m, injection_flags: injectionFlags(m.text) }));
@@ -217,6 +219,7 @@ export function makeCore(store) {
     // Raw inbox for the human-facing web dashboard (no fencing — a person reads it, not an agent).
     inboxRaw({ member_id, since = 0 } = {}) {
       const me = ctx(member_id);
+      if (!me.approved) throw new Error("You're not approved into the room yet.");   // 🟠 read gate
       store.touchMember(member_id);
       const messages = store.inbox(me.room_id, me.alias, since);
       return { count: messages.length, next_since: messages.length ? messages[messages.length - 1].seq : since, messages };
@@ -225,8 +228,12 @@ export function makeCore(store) {
     who({ member_id, room_id, api_key } = {}) {
       const rid = room_id || (member_id ? ctx(member_id).room_id : null);
       if (!rid) throw new Error("member_id or room_id is required.");
-      if (room_id) ownerOf(room_id, api_key);   // management view requires owner
-      return { members: store.members(rid) };
+      if (room_id) { ownerOf(room_id, api_key); return { members: store.members(rid) }; }  // owner: full (ids for kick/approve)
+      const me = ctx(member_id);
+      if (!me.approved) throw new Error("You're not approved into the room yet.");
+      // 🔴 member view: strip member ids — a participant must NOT learn others' bearer ids
+      // (that would let them read others' DMs, impersonate, or kick via leave).
+      return { members: store.members(rid).map(({ id, ...pub }) => pub) };
     },
 
     // Leave a room — frees the seat immediately.

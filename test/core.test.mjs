@@ -350,4 +350,27 @@ core.setPlan({ api_key: "tkey", plan: "pro" });   // unlimited key for handoff t
   ok("C2 fix: consolidate caps at 50 + dedupes repeated codes (no scrypt amplification)");
 }
 
-console.log(`\n🕸️  BATON: ${pass}/20 groups passed\n`);
+// 21. pentest fixes: who hides member ids · approval gates READS · alias XSS stripped
+{
+  core.signup({ api_key: "sec-owner-key-1" });
+  const room = core.createRoom({ name: "sec", alias: "cap", api_key: "sec-owner-key-1" });
+  const a = core.join({ code: room.invite_code, alias: "alice" });
+  // 🔴 member view of who must NOT leak member ids (bearer credentials)
+  const mw = core.who({ member_id: a.member_id });
+  assert.ok(mw.members.every((m) => m.id === undefined));
+  // owner view keeps ids (needed for kick/approve)
+  const ow = core.who({ room_id: room.room_id, api_key: "sec-owner-key-1" });
+  assert.ok(ow.members.some((m) => m.id));
+  // 🟠 approval gates READS too (not just send)
+  const gr = core.createRoom({ name: "gated", alias: "chief", api_key: "sec-owner-key-1", require_approval: true });
+  const g = core.join({ code: gr.invite_code, alias: "guest" });
+  assert.throws(() => core.inbox({ member_id: g.member_id }), /approved/);
+  assert.throws(() => core.who({ member_id: g.member_id }), /approved/);
+  // 🟡 alias XSS chars stripped at storage
+  core.join({ code: room.invite_code, alias: "x'),alert(1);//" });
+  const xw = core.who({ room_id: room.room_id, api_key: "sec-owner-key-1" });
+  assert.ok(xw.members.every((m) => !/['"<>`\\]/.test(m.alias)));
+  ok("pentest fixes: who hides ids · approval gates reads · alias XSS stripped");
+}
+
+console.log(`\n🕸️  BATON: ${pass}/21 groups passed\n`);
