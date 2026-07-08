@@ -23,12 +23,11 @@ core.setPlan({ api_key: "tkey", plan: "pro" });   // unlimited key for handoff t
 
 // 2. relay: two different 'models' talk in a room
 {
-  const { code } = core.createRoom({ name: "bongee-cmi", ttl_hours: 1 });
-  assert.match(code, /^BTN-R-[0-9A-Z-]+$/);
-  const boss = core.join({ code, alias: "owner", model: "claude-code" });
-  const dev = core.join({ code, alias: "dev", model: "codex" });
-  core.send({ code, member_id: boss.member_id, to: "dev", text: "이 스키마 검토해줘" });
-  const got = core.inbox({ code, member_id: dev.member_id });
+  const room = core.createRoom({ name: "bongee-cmi", alias: "owner", model: "claude-code" });
+  assert.match(room.invite_code, /^BTN-R-[0-9A-Z-]+$/);
+  const dev = core.join({ code: room.invite_code, alias: "dev", model: "codex" });
+  core.send({ member_id: room.member_id, to: "dev", text: "이 스키마 검토해줘" });
+  const got = core.inbox({ member_id: dev.member_id });
   assert.equal(got.count, 1);
   assert.match(got.messages_fenced, /UNTRUSTED/);           // C1 fencing present
   assert.match(got.messages_fenced, /스키마 검토/);
@@ -37,18 +36,18 @@ core.setPlan({ api_key: "tkey", plan: "pro" });   // unlimited key for handoff t
 
 // 3. alias spoofing + reserved names blocked (H3)
 {
-  const { code } = core.createRoom({});
-  core.join({ code, alias: "dev", model: "x" });
-  assert.throws(() => core.join({ code, alias: "dev" }), /taken/);
-  assert.throws(() => core.join({ code, alias: "spider" }), /reserved/);
+  const room = core.createRoom({});
+  core.join({ code: room.invite_code, alias: "dev", model: "x" });
+  assert.throws(() => core.join({ code: room.invite_code, alias: "dev" }), /taken/);
+  assert.throws(() => core.join({ code: room.invite_code, alias: "spider" }), /reserved/);
   ok("duplicate + reserved aliases rejected");
 }
 
 // 4. secret scrubbing on send
 {
-  const { code } = core.createRoom({});
-  const a = core.join({ code, alias: "a", model: "x" });
-  const r = core.send({ code, member_id: a.member_id, text: "key sk-abcdefghij0123456789XYZ done" });
+  const room = core.createRoom({});
+  const a = core.join({ code: room.invite_code, alias: "a", model: "x" });
+  const r = core.send({ member_id: a.member_id, text: "key sk-abcdefghij0123456789XYZ done" });
   assert.equal(r.redactions, 1);
   ok("secrets scrubbed before storage");
 }
@@ -187,19 +186,34 @@ core.setPlan({ api_key: "tkey", plan: "pro" });   // unlimited key for handoff t
   ok("funnel: baton_signup → free account (20/mo); anon trial capped at 5");
 }
 
-// 14. seats: a room caps concurrent sessions by the OWNER's plan (orchestration paywall)
+// 14. team room: persistent room + rotating invite codes + owner-only kick/approval
 {
-  const KEY = "seat-owner-key-1234";
+  const KEY = "team-owner-key-1234";
   core.signup({ api_key: KEY });
-  const r = core.createRoom({ api_key: KEY, alias: "boss" });   // session 1 (owner)
-  core.join({ code: r.code, alias: "s2" });                     // session 2
-  assert.throws(() => core.join({ code: r.code, alias: "s3" }), /full/);  // Free = 2 seats
-  core.setPlan({ api_key: KEY, plan: "team" });                 // Team = 10 seats
-  core.join({ code: r.code, alias: "s3" });
-  assert.equal(core.who({ code: r.code }).members.length, 3);
+  const room = core.createRoom({ name: "team", alias: "lead", api_key: KEY });
+  assert.ok(room.room_id && room.invite_code);
+  const dev = core.join({ code: room.invite_code, alias: "dev" });
+  assert.ok(dev.approved);                                        // no approval by default
+  // owner rotates the invite; old code is revoked, new one works
+  const inv2 = core.newInvite({ room_id: room.room_id, api_key: KEY, revoke_old: true });
+  assert.notEqual(inv2.invite_code, room.invite_code);
+  assert.throws(() => core.join({ code: room.invite_code, alias: "late" }), /invalid|expired|revoked/);
+  const gem = core.join({ code: inv2.invite_code, alias: "gemini" });
+  assert.ok(gem.member_id);
+  // owner-only kick
+  assert.equal(core.kick({ room_id: room.room_id, api_key: KEY, target_member_id: gem.member_id }).removed, true);
+  assert.throws(() => core.kick({ room_id: room.room_id, api_key: "not-owner", target_member_id: dev.member_id }), /owner/);
+  // approval-gated room: joiner waits, can't send until approved
+  const ar = core.createRoom({ name: "gated", alias: "chief", api_key: KEY, require_approval: true });
+  const guest = core.join({ code: ar.invite_code, alias: "guest" });
+  assert.equal(guest.approved, false);
+  assert.throws(() => core.send({ member_id: guest.member_id, text: "hi" }), /approved/);
+  core.approve({ room_id: ar.room_id, api_key: KEY, member_id: guest.member_id });
+  core.send({ member_id: guest.member_id, text: "now ok" });
+  assert.equal(core.inbox({ member_id: ar.member_id }).count, 1);
   // short api_key on signup is rejected (silent-substitution trap fixed)
   assert.throws(() => core.signup({ api_key: "short" }), /12 characters/);
-  ok("seats: Free room caps at 2 sessions; Team lifts it; short signup key rejected");
+  ok("team room: rotating invites + revoke old + owner-only kick + approval gate");
 }
 
 // 15. verified handoff via SIGNED RECEIPT (the differentiator) + forgery rejected
@@ -259,18 +273,17 @@ core.setPlan({ api_key: "tkey", plan: "pro" });   // unlimited key for handoff t
 
 // 17. auto-delivery: pass with a room drops the code into the room (no human copy-paste)
 {
-  const { code: rcode } = core.createRoom({ name: "handoff-lane" });
-  const sender = core.join({ code: rcode, alias: "lead", model: "claude" });
-  const receiver = core.join({ code: rcode, alias: "codex", model: "codex" });
-  const p = core.pass({ api_key: "tkey", room: rcode, member_id: sender.member_id,
+  const room = core.createRoom({ name: "handoff-lane", alias: "lead", model: "claude" });
+  const receiver = core.join({ code: room.invite_code, alias: "codex", model: "codex" });
+  const p = core.pass({ api_key: "tkey", member_id: room.member_id,
     snapshot: { context: { goal: "auto-delivered handoff" } } });
-  assert.equal(p.delivered_to, rcode);                  // reported as auto-sent
+  assert.equal(p.delivered_to, room.room_id);           // auto-sent to sender's room
   // the receiver sees the handoff code in their inbox — without anyone pasting it
-  const inbox = core.inbox({ code: rcode, member_id: receiver.member_id });
+  const inbox = core.inbox({ member_id: receiver.member_id });
   assert.equal(inbox.count, 1);
   assert.match(inbox.messages_fenced, new RegExp(p.code.slice(0, 12)));  // the BTN-H code arrived
   assert.match(inbox.messages_fenced, /New baton/);
-  ok("auto-delivery: pass(room) drops the handoff code into the room inbox — no copy-paste");
+  ok("auto-delivery: pass(member_id) drops the handoff code into the room inbox — no copy-paste");
 }
 
 // 18. consolidate: gather departments' handoffs into one result board with trust tiers

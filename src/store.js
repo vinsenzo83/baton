@@ -34,6 +34,14 @@ export function openStore(path = "./data/baton.db") {
     CREATE INDEX IF NOT EXISTS idx_msg_room ON messages(room_hash, seq);
     CREATE INDEX IF NOT EXISTS idx_mem_room ON members(room_hash);
 
+    -- TEAM ROOMS: a room persists (rooms.code_hash = stable room_id, owner-managed); people
+    -- enter via rotating INVITE codes that expire (72h) and can be re-issued. Server-managed
+    -- (not code-derived) so invites can rotate and the owner can kick/approve.
+    CREATE TABLE IF NOT EXISTS invites (
+      invite_hash TEXT PRIMARY KEY, room_id TEXT, expires_at INTEGER, revoked INTEGER DEFAULT 0, created_at INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_invite_room ON invites(room_id);
+
     -- shared spider corpus (M2-2). Only scrubbed, generalized techniques — never code/secrets.
     CREATE TABLE IF NOT EXISTS spider_patterns (
       fingerprint TEXT PRIMARY KEY, klass TEXT, name TEXT, signal TEXT, fix TEXT,
@@ -76,6 +84,11 @@ export function openStore(path = "./data/baton.db") {
   try { db.exec(`ALTER TABLE invoices ADD COLUMN actual_amount REAL`); } catch { /* present */ }
   // B (seats): tag rooms with an owner so the active-room limit can be enforced per account.
   try { db.exec(`ALTER TABLE rooms ADD COLUMN owner_hash TEXT`); } catch { /* present */ }
+  // TEAM ROOMS migrations: plaintext room name (server-managed), approval flag, member approval.
+  try { db.exec(`ALTER TABLE rooms ADD COLUMN room_name TEXT`); } catch { /* present */ }
+  try { db.exec(`ALTER TABLE rooms ADD COLUMN require_approval INTEGER DEFAULT 0`); } catch { /* present */ }
+  try { db.exec(`ALTER TABLE members ADD COLUMN approved INTEGER DEFAULT 1`); } catch { /* present */ }
+  try { db.exec(`ALTER TABLE messages ADD COLUMN body TEXT`); } catch { /* present */ }
   // C1: purge any corpus rows containing HTML/angle-brackets (stored-XSS cleanup, idempotent).
   try { db.exec(`DELETE FROM spider_patterns WHERE name LIKE '%<%' OR name LIKE '%>%'
                  OR signal LIKE '%<%' OR fix LIKE '%<%' OR klass LIKE '%<%'`); } catch { /* table may not exist yet */ }
@@ -84,38 +97,41 @@ export function openStore(path = "./data/baton.db") {
   const alive = (row) => row && (!row.expires_at || row.expires_at > now());
 
   return {
-    // ---- rooms ----
-    createRoom(code, name, ttlMs, ownerHash = null) {
-      const s = sealBody(code, name || "");
-      db.prepare(`INSERT INTO rooms(code_hash,name,salt,iv,tag,ct,created_at,expires_at,owner_hash)
-                  VALUES(?,?,?,?,?,?,?,?,?)`).run(
-        codeHash(code), null, s.salt, s.iv, s.tag, s.ct, now(), ttlMs ? now() + ttlMs : null, ownerHash);
+    // ---- TEAM ROOMS (persistent; room_id = rooms.code_hash) ----
+    createTeamRoom(roomId, name, ownerHash, requireApproval) {
+      // room persists (expires_at NULL); entry is via rotating invite codes (see addInvite).
+      db.prepare(`INSERT INTO rooms(code_hash,room_name,owner_hash,require_approval,created_at,expires_at)
+                  VALUES(?,?,?,?,?,NULL)`).run(roomId, name || "", ownerHash, requireApproval ? 1 : 0, now());
       return true;
     },
-    // Count an owner's still-alive rooms (for the activeRooms limit).
-    ownerActiveRooms(ownerHash) {
-      if (!ownerHash) return 0;
-      return db.prepare(`SELECT COUNT(*) AS n FROM rooms WHERE owner_hash=? AND (expires_at IS NULL OR expires_at > ?)`)
-        .get(ownerHash, now()).n;
+    getTeamRoom(roomId) {
+      return db.prepare(`SELECT code_hash AS room_id, room_name AS name, owner_hash, require_approval
+                         FROM rooms WHERE code_hash=?`).get(roomId) || null;
     },
-    // Global active-room count (admin stat).
     activeRoomsTotal() {
       return db.prepare(`SELECT COUNT(*) AS n FROM rooms WHERE expires_at IS NULL OR expires_at > ?`).get(now()).n;
     },
-    getRoom(code) {
-      const r = db.prepare(`SELECT * FROM rooms WHERE code_hash=?`).get(codeHash(code));
-      if (!alive(r)) return null;
-      return { ...r, name: safeOpen(code, r) };
+    // ---- invites (rotating, expiring) ----
+    addInvite(inviteHash, roomId, ttlMs) {
+      db.prepare(`INSERT INTO invites(invite_hash,room_id,expires_at,revoked,created_at)
+                  VALUES(?,?,?,0,?)`).run(inviteHash, roomId, now() + ttlMs, now());
     },
-    // Concurrent = members seen within the active window (default 3 min). A session that
-    // stopped polling frees its seat, so "seats" means concurrent, not lifetime joins (🟠2).
-    memberCount(roomHash, windowMs = 180_000) {
-      return db.prepare(`SELECT COUNT(*) AS n FROM members WHERE room_hash=? AND last_seen > ?`)
-        .get(roomHash, now() - windowMs).n;
+    // resolve an invite code hash → room_id, only if not expired and not revoked.
+    resolveInvite(inviteHash) {
+      const r = db.prepare(`SELECT room_id,expires_at,revoked FROM invites WHERE invite_hash=?`).get(inviteHash);
+      if (!r || r.revoked || (r.expires_at && r.expires_at <= now())) return null;
+      return r.room_id;
     },
-    // Explicit leave frees the seat immediately.
-    leaveMember(roomHash, memberId) {
-      return db.prepare(`DELETE FROM members WHERE room_hash=? AND id=?`).run(roomHash, memberId).changes > 0;
+    revokeInvitesForRoom(roomId) {
+      db.prepare(`UPDATE invites SET revoked=1 WHERE room_id=?`).run(roomId);
+    },
+    // ---- members (room_id based) ----
+    memberCount(roomId, windowMs = 180_000) {
+      return db.prepare(`SELECT COUNT(*) AS n FROM members WHERE room_hash=? AND approved=1 AND last_seen > ?`)
+        .get(roomId, now() - windowMs).n;
+    },
+    leaveMember(roomId, memberId) {
+      return db.prepare(`DELETE FROM members WHERE room_hash=? AND id=?`).run(roomId, memberId).changes > 0;
     },
     touchMember(memberId) {
       db.prepare(`UPDATE members SET last_seen=? WHERE id=?`).run(now(), memberId);
@@ -125,47 +141,42 @@ export function openStore(path = "./data/baton.db") {
       const a = db.prepare(`SELECT plan FROM accounts WHERE key_hash=?`).get(keyHash);
       return a?.plan || "free";
     },
-    join(code, alias, model) {
-      const r = db.prepare(`SELECT * FROM rooms WHERE code_hash=?`).get(codeHash(code));
-      if (!alive(r)) return null;
+    teamJoin(roomId, alias, model, approved) {
       const id = participantId();
-      db.prepare(`INSERT INTO members(id,room_hash,alias,model,joined_at,last_seen)
-                  VALUES(?,?,?,?,?,?)`).run(id, r.code_hash, alias, model || "unknown", now(), now());
-      return { id, room_hash: r.code_hash };
+      db.prepare(`INSERT INTO members(id,room_hash,alias,model,joined_at,last_seen,approved)
+                  VALUES(?,?,?,?,?,?,?)`).run(id, roomId, alias, model || "unknown", now(), now(), approved ? 1 : 0);
+      return { id, room_id: roomId };
     },
-    members(roomHash) {
-      return db.prepare(`SELECT id,alias,model,last_seen FROM members WHERE room_hash=? ORDER BY joined_at`).all(roomHash);
+    // member_id → { room_id, alias, approved } — lets send/inbox/who work off member_id (the
+    // invite code is just an entry ticket that rotates; activity is keyed by member).
+    memberRoom(memberId) {
+      const m = db.prepare(`SELECT room_hash AS room_id, alias, approved FROM members WHERE id=?`).get(memberId);
+      return m || null;
     },
-    aliasTaken(roomHash, alias) {
-      return !!db.prepare(`SELECT 1 FROM members WHERE room_hash=? AND lower(alias)=lower(?)`).get(roomHash, alias);
+    members(roomId) {
+      return db.prepare(`SELECT id,alias,model,last_seen,approved FROM members WHERE room_hash=? ORDER BY joined_at`).all(roomId);
+    },
+    aliasTaken(roomId, alias) {
+      return !!db.prepare(`SELECT 1 FROM members WHERE room_hash=? AND lower(alias)=lower(?)`).get(roomId, alias);
+    },
+    approveMember(roomId, memberId) {
+      return db.prepare(`UPDATE members SET approved=1 WHERE room_hash=? AND id=?`).run(roomId, memberId).changes > 0;
     },
 
-    // ---- messages ----
-    // DoS fix: derive the room key ONCE per call from the room salt, reuse across messages
-    // (aes-gcm with a per-message iv) instead of running scrypt per message.
-    send(code, roomHash, fromId, fromAlias, toAlias, text) {
-      const room = db.prepare(`SELECT salt FROM rooms WHERE code_hash=?`).get(roomHash);
-      const key = deriveKey(code, Buffer.from(room.salt, "base64"));
-      const seqRow = db.prepare(`SELECT COALESCE(MAX(seq),0)+1 AS n FROM messages WHERE room_hash=?`).get(roomHash);
-      const s = sealWithKey(key, text);
-      db.prepare(`INSERT INTO messages(room_hash,seq,from_id,from_alias,to_alias,salt,iv,tag,ct,created_at)
-                  VALUES(?,?,?,?,?,?,?,?,?,?)`).run(
-        roomHash, seqRow.n, fromId, fromAlias, toAlias || null, null, s.iv, s.tag, s.ct, now());
+    // ---- messages (plaintext body — server-managed team rooms) ----
+    send(roomId, fromId, fromAlias, toAlias, text) {
+      const seqRow = db.prepare(`SELECT COALESCE(MAX(seq),0)+1 AS n FROM messages WHERE room_hash=?`).get(roomId);
+      db.prepare(`INSERT INTO messages(room_hash,seq,from_id,from_alias,to_alias,body,created_at)
+                  VALUES(?,?,?,?,?,?,?)`).run(roomId, seqRow.n, fromId, fromAlias, toAlias || null, text, now());
       db.prepare(`UPDATE members SET last_seen=? WHERE id=?`).run(now(), fromId);
       return seqRow.n;
     },
-    inbox(code, roomHash, myAlias, sinceSeq = 0, limit = 200) {
-      const room = db.prepare(`SELECT salt FROM rooms WHERE code_hash=?`).get(roomHash);
-      const key = deriveKey(code, Buffer.from(room.salt, "base64"));   // one derivation for all rows
+    inbox(roomId, myAlias, sinceSeq = 0, limit = 200) {
       const rows = db.prepare(
-        `SELECT seq,from_alias,to_alias,salt,iv,tag,ct,created_at FROM messages
+        `SELECT seq,from_alias,to_alias,body,created_at FROM messages
          WHERE room_hash=? AND seq>? AND (to_alias IS NULL OR lower(to_alias)=lower(?))
-         ORDER BY seq LIMIT ?`).all(roomHash, sinceSeq, myAlias, Math.min(limit, 500));
-      return rows.map((m) => ({
-        seq: m.seq, from: m.from_alias, to: m.to_alias, at: m.created_at,
-        // rows with a legacy per-message salt fall back to per-message derivation
-        text: m.salt ? openBody(code, m) : openWithKey(key, m),
-      }));
+         ORDER BY seq LIMIT ?`).all(roomId, sinceSeq, myAlias, Math.min(limit, 500));
+      return rows.map((m) => ({ seq: m.seq, from: m.from_alias, to: m.to_alias, at: m.created_at, text: m.body }));
     },
 
     // ---- snapshots (handoff) ----
@@ -218,15 +229,18 @@ export function openStore(path = "./data/baton.db") {
         created_at: row.created_at,
       };
     },
+    // Handoff shred: destroy a snapshot by its code.
     revoke(code) {
-      const h = codeHash(code);
-      // L1: actually shred everything under this code — messages/members too, not just the room row.
+      return db.prepare(`DELETE FROM snapshots WHERE code_hash=?`).run(codeHash(code)).changes > 0;
+    },
+    // Owner closes a team room: shred the room + its invites + members + messages.
+    deleteRoom(roomId) {
       const tx = db.transaction(() => {
-        const a = db.prepare(`DELETE FROM snapshots WHERE code_hash=?`).run(h).changes;
-        const b = db.prepare(`DELETE FROM rooms WHERE code_hash=?`).run(h).changes;
-        db.prepare(`DELETE FROM messages WHERE room_hash=?`).run(h);
-        db.prepare(`DELETE FROM members WHERE room_hash=?`).run(h);
-        return a + b > 0;
+        const n = db.prepare(`DELETE FROM rooms WHERE code_hash=?`).run(roomId).changes;
+        db.prepare(`DELETE FROM invites WHERE room_id=?`).run(roomId);
+        db.prepare(`DELETE FROM messages WHERE room_hash=?`).run(roomId);
+        db.prepare(`DELETE FROM members WHERE room_hash=?`).run(roomId);
+        return n > 0;
       });
       return tx();
     },

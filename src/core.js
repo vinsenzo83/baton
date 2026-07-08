@@ -55,6 +55,21 @@ export function makeCore(store) {
     return { keyHash: codeHash(apiKey), plan: a.plan, org: a.org || null, limits: planOf(a.plan).limits };
   };
 
+  // member_id → { room_id, alias, approved } for team rooms. After join, activity is keyed by
+  // member_id (the invite code is just a rotating entry ticket, not needed to send/read).
+  const ctx = (memberId) => {
+    const m = store.memberRoom(memberId);
+    if (!m) throw new Error("member_id not found — join with a valid invite code first.");
+    return m;
+  };
+  // Owner check: the api_key's hash must match the room's owner_hash.
+  const ownerOf = (roomId, apiKey) => {
+    const room = store.getTeamRoom(roomId);
+    if (!room) throw new Error("room_id not found.");
+    if (!apiKey || codeHash(apiKey) !== room.owner_hash) throw new Error("Only the room owner can do this.");
+    return room;
+  };
+
   return {
     // ---------- SIGNUP (funnel) ----------
     // Self-serve free account. Creates a personal Free bucket (20/mo). No email/payment.
@@ -129,65 +144,67 @@ export function makeCore(store) {
       store.upsertAccount(codeHash(api_key), { plan, org });
       return { ok: true, plan };
     },
-    // ---------- RELAY ----------
-    createRoom({ name, ttl_hours = 72, alias, api_key } = {}) {
-      ttl_hours = sanitizeTtl(ttl_hours);           // L2: reject non-numeric ttl (no永구방)
+    // ---------- TEAM ROOMS (persistent room + rotating invite codes) ----------
+    // The room lives on (owner-managed); people enter via invite codes that expire (72h) and can
+    // be re-issued. To add someone new, issue a fresh invite (baton_new_invite) and share it.
+    createRoom({ name, alias, api_key, require_approval = false } = {}) {
       if (alias != null) alias = normalizeAlias(alias);
-      // B (seats): enforce the active-room limit per account (Free 2 · Pro 20 · Team ∞).
       const a = acct(api_key);
-      if (isBillingOn() && a.keyHash && a.limits.activeRooms !== Infinity) {
-        const open = store.ownerActiveRooms(a.keyHash);
-        if (open >= a.limits.activeRooms)
-          throw new Error(`Active-room limit reached (${a.limits.activeRooms} on ${a.plan}). Close a room or run baton_upgrade.`);
-      }
-      const code = roomCode();
-      store.createRoom(code, name, ttl_hours * HOUR, a.keyHash || null);
-      // Creator auto-joins in one step (no separate baton_join needed).
+      const room_id = roomCode();                       // stable internal id (owner keeps this)
+      store.createTeamRoom(room_id, name || "", a.keyHash || null, !!require_approval);
+      const invite = roomCode();                        // first invite code (shared, 72h)
+      store.addInvite(codeHash(invite), room_id, 72 * HOUR);
       let member_id = null;
-      if (alias) member_id = store.join(code, alias, "creator").id;
-      return { code, name: name || null, expires_in_hours: ttl_hours,
-        member_id, alias: alias || null,
-        share: `Only sessions that know this code can join: ${code}` };
+      if (alias) {
+        if (RESERVED.test(foldConfusable(alias))) throw new Error(`Alias '${alias}' is reserved.`);
+        member_id = store.teamJoin(room_id, alias, "creator", true).id;   // owner is auto-approved
+      }
+      return {
+        room_id, invite_code: invite, invite_expires_in_hours: 72,
+        member_id, alias: alias || null, require_approval: !!require_approval,
+        share: `Share this invite code (valid 72h): ${invite}. Reissue anytime with baton_new_invite.`,
+        owner_note: "Keep room_id + your api_key to manage the room (new invite / approve / kick).",
+      };
+    },
+
+    // Owner issues a fresh invite code (72h). Optionally revoke all older codes.
+    newInvite({ room_id, api_key, revoke_old = false } = {}) {
+      ownerOf(room_id, api_key);
+      if (revoke_old) store.revokeInvitesForRoom(room_id);
+      const invite = roomCode();
+      store.addInvite(codeHash(invite), room_id, 72 * HOUR);
+      return { invite_code: invite, expires_in_hours: 72, revoked_old_codes: !!revoke_old };
     },
 
     join({ code, alias, model } = {}) {
       code = normalizeCode(code);
-      alias = normalizeAlias(alias);                 // M1: trim + NFKC + collapse before checks
+      alias = normalizeAlias(alias);
       if (!alias) throw new Error("alias (a display name for the room) is required.");
-      const room = store.getRoom(code);
-      if (!room) throw new Error("Code is invalid or expired.");
-      // M1: reserved-name check on the confusable-folded alias (blocks "admin ", " boss", "аdmin")
-      if (RESERVED.test(foldConfusable(alias)) || store.aliasTaken(room.code_hash, alias))
+      const room_id = store.resolveInvite(codeHash(code));
+      if (!room_id) throw new Error("Invite code is invalid, expired, or revoked. Ask the owner for a fresh code.");
+      if (RESERVED.test(foldConfusable(alias)) || store.aliasTaken(room_id, alias))
         throw new Error(`Alias '${alias}' is reserved or already taken.`);
-      // SEATS: cap concurrent sessions in a room by the room OWNER's plan (Free 2 · Pro 4 · Team 10).
-      // This is the orchestration paywall — how many AIs/people can collaborate at once.
-      const ownerPlan = store.getAccountPlan(room.owner_hash);
-      const seatCap = planOf(ownerPlan).limits.seatsPerRoom;
-      if (isBillingOn() && store.memberCount(room.code_hash) >= seatCap)
-        throw new Error(`Room is full (${seatCap} seats on ${ownerPlan}). The room owner can baton_upgrade for more concurrent sessions.`);
-      const m = store.join(code, alias, model);
-      return { member_id: m.id, alias, hint: "Use this member_id for baton_send / baton_inbox." };
+      const room = store.getTeamRoom(room_id);
+      const approved = !room.require_approval;
+      const m = store.teamJoin(room_id, alias, model, approved);
+      return { member_id: m.id, alias, approved,
+        hint: approved
+          ? "You're in. Use this member_id for baton_send / baton_inbox."
+          : "Waiting for the owner to approve you — ask them to run baton_approve." };
     },
 
-    send({ code, member_id, to, text } = {}) {
-      code = normalizeCode(code);
-      const room = store.getRoom(code);
-      if (!room) throw new Error("Code is invalid or expired.");
-      const me = store.members(room.code_hash).find((x) => x.id === member_id);
-      if (!me) throw new Error("member_id is not in this room. Run baton_join first.");
+    send({ member_id, to, text } = {}) {
+      const me = ctx(member_id);
+      if (!me.approved) throw new Error("You're not approved into the room yet.");
       const { text: clean, redactions } = scrubSecrets(String(text || ""));
-      const seq = store.send(code, room.code_hash, member_id, me.alias, to, clean);
+      const seq = store.send(me.room_id, member_id, me.alias, to, clean);
       return { seq, from: me.alias, to: to || "(all)", redactions };
     },
 
-    inbox({ code, member_id, since = 0 } = {}) {
-      code = normalizeCode(code);
-      const room = store.getRoom(code);
-      if (!room) throw new Error("Code is invalid or expired.");
-      const me = store.members(room.code_hash).find((x) => x.id === member_id);
-      if (!me) throw new Error("member_id is not in this room.");
-      store.touchMember(member_id);   // polling keeps the seat alive (concurrent-seat window)
-      const msgs = store.inbox(code, room.code_hash, me.alias, since);
+    inbox({ member_id, since = 0 } = {}) {
+      const me = ctx(member_id);
+      store.touchMember(member_id);
+      const msgs = store.inbox(me.room_id, me.alias, since);
       const flagged = msgs.map((m) => ({ ...m, injection_flags: injectionFlags(m.text) }));
       return {
         count: msgs.length,
@@ -197,31 +214,37 @@ export function makeCore(store) {
     },
 
     // Raw inbox for the human-facing web dashboard (no fencing — a person reads it, not an agent).
-    inboxRaw({ code, member_id, since = 0 } = {}) {
-      code = normalizeCode(code);
-      const room = store.getRoom(code);
-      if (!room) throw new Error("Code is invalid or expired.");
-      const me = store.members(room.code_hash).find((x) => x.id === member_id);
-      if (!me) throw new Error("member_id is not in this room.");
-      store.touchMember(member_id);   // dashboard polling keeps the seat alive
-      const messages = store.inbox(code, room.code_hash, me.alias, since);
+    inboxRaw({ member_id, since = 0 } = {}) {
+      const me = ctx(member_id);
+      store.touchMember(member_id);
+      const messages = store.inbox(me.room_id, me.alias, since);
       return { count: messages.length, next_since: messages.length ? messages[messages.length - 1].seq : since, messages };
     },
 
-    who({ code } = {}) {
-      code = normalizeCode(code);
-      const room = store.getRoom(code);
-      if (!room) throw new Error("Code is invalid or expired.");
-      return { members: store.members(room.code_hash) };
+    who({ member_id, room_id, api_key } = {}) {
+      const rid = room_id || (member_id ? ctx(member_id).room_id : null);
+      if (!rid) throw new Error("member_id or room_id is required.");
+      if (room_id) ownerOf(room_id, api_key);   // management view requires owner
+      return { members: store.members(rid) };
     },
 
-    // Leave a room — frees the seat immediately (🟠2: makes seats truly concurrent).
-    leave({ code, member_id } = {}) {
-      code = normalizeCode(code);
-      const room = store.getRoom(code);
-      if (!room) throw new Error("Code is invalid or expired.");
-      const ok = store.leaveMember(room.code_hash, member_id);
-      return { left: ok };
+    // Leave a room — frees the seat immediately.
+    leave({ member_id } = {}) {
+      const m = store.memberRoom(member_id);
+      if (!m) return { left: false };
+      return { left: store.leaveMember(m.room_id, member_id) };
+    },
+
+    // Owner removes a participant.
+    kick({ room_id, api_key, target_member_id } = {}) {
+      ownerOf(room_id, api_key);
+      return { removed: store.leaveMember(room_id, target_member_id) };
+    },
+
+    // Owner approves a pending participant (when require_approval is on).
+    approve({ room_id, api_key, member_id } = {}) {
+      ownerOf(room_id, api_key);
+      return { approved: store.approveMember(room_id, member_id) };
     },
 
     // ---------- HANDOFF ----------
@@ -301,17 +324,15 @@ export function makeCore(store) {
       // Auto-deliver: if a room + member_id are given, drop the code into that room so the
       // receiving session sees it in baton_inbox — no human copies the code around (dogfood fix).
       let delivered_to = null;
-      if (room && member_id) {
+      if (member_id) {   // if the sender is in a room, drop the handoff code into it (member_id → room)
         try {
-          const rcode = normalizeCode(room);
-          const rr = store.getRoom(rcode);
-          const me = rr && store.members(rr.code_hash).find((x) => x.id === member_id);
-          if (rr && me) {
-            store.send(rcode, rr.code_hash, member_id, me.alias, null,
+          const m = store.memberRoom(member_id);
+          if (m && m.approved) {
+            store.send(m.room_id, member_id, m.alias, null,
               `🏃 New baton: ${code}  ${badge} — receive with baton_receive`);
-            delivered_to = room;
+            delivered_to = m.room_id;
           }
-        } catch { /* room delivery is best-effort; the code is still returned below */ }
+        } catch { /* best-effort; the code is still returned below */ }
       }
       return {
         code, one_time, expires_in_hours: ttl_hours, secrets_redacted: redactions, version,
@@ -320,7 +341,7 @@ export function makeCore(store) {
         tier: manifest?.tier,                 // self-attested | independent
         delivered_to,                         // room the code was auto-sent to (if any)
         share: delivered_to
-          ? `Auto-sent to room ${room} — the receiver finds it in baton_inbox (no copy-paste).`
+          ? `Auto-sent to your room — the others find it in baton_inbox (no copy-paste).`
           : `The receiver picks it up with baton_receive: ${code}`,
       };
     },
@@ -433,10 +454,16 @@ export function makeCore(store) {
       };
     },
 
-    revoke({ code } = {}) {
+    revoke({ code } = {}) {   // handoff (snapshot) shred
       code = normalizeCode(code);
       const ok = store.revoke(code);
-      return { revoked: ok, note: ok ? "Code shredded — no longer decryptable (crypto-shred)." : "Code not found." };
+      return { revoked: ok, note: ok ? "Handoff code shredded — no longer decryptable (crypto-shred)." : "Code not found." };
+    },
+
+    // Owner closes the whole team room (shreds it + invites + members + messages).
+    closeRoom({ room_id, api_key } = {}) {
+      ownerOf(room_id, api_key);
+      return { closed: store.deleteRoom(room_id) };
     },
   };
 }
