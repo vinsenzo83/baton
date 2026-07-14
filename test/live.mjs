@@ -56,7 +56,7 @@ let handoffCode;
 
   const verified = parse(await call("baton_verify", { target: "publish",
     static_checks: [{ dim: "integration", passed: true, evidence: "code ok" }],
-    e2e_evidence: [{ claim: "published", observed: true, detail: "POST 200 + rows 41->42" }] }));
+    e2e_evidence: [{ claim: "published", observed: true, detail: "POST 200 + rows 41->42", method: "db-delta", evidence_refs: ["db:rows:41-42"] }] }));
   if (verified.verdict !== "verified") throw new Error("observed E2E didn't verify");
   ok("verify gate live: static-only ≠ verified; only observed E2E earns 🕸️");
 }

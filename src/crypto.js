@@ -70,6 +70,9 @@ function canonical(obj) {
   if (Array.isArray(obj)) return "[" + obj.map(canonical).join(",") + "]";
   return "{" + Object.keys(obj).sort().map((k) => JSON.stringify(k) + ":" + canonical(obj[k])).join(",") + "}";
 }
+export function digestCanonical(obj) {
+  return createHash("sha256").update(canonical(obj)).digest("hex");
+}
 export function signReceipt(body) {
   return createHmac("sha256", RECEIPT_SECRET()).update(canonical(body)).digest("hex");
 }

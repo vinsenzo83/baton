@@ -11,6 +11,8 @@ const DB = "./data/test.db";
 rmSync(DB, { force: true }); rmSync(DB + "-wal", { force: true }); rmSync(DB + "-shm", { force: true });
 const core = makeCore(openStore(DB));
 let pass = 0; const ok = (n) => { console.log("  ✓", n); pass++; };
+const obs = (claim, detail, method = "command", ref = "command:test-suite") =>
+  ({ claim, observed: true, detail, method, evidence_refs: [ref] });
 core.setPlan({ api_key: "tkey", plan: "pro" });   // unlimited key for handoff tests
 
 // 1. crypto round-trip + wrong code fails
@@ -86,9 +88,15 @@ core.setPlan({ api_key: "tkey", plan: "pro" });   // unlimited key for handoff t
 
   const withE2E = gateVerdict({ target: "publish flow",
     static_checks: [{ dim: "integration", passed: true, evidence: "upsert 코드 정상" }],
-    e2e_evidence: [{ claim: "발행됨", observed: true, detail: "POST 200 + rows 41→42" }] });
+    e2e_evidence: [obs("발행됨", "POST 200 + rows 41→42", "db-delta", "db:rows:41-42")] });
   assert.equal(withE2E.verdict, "verified");
   assert.match(withE2E.manifest.badge, /VERIFIED/);
+
+  const weakSelfReport = gateVerdict({ target: "publish flow",
+    static_checks: [{ dim: "integration", passed: true, evidence: "upsert 코드 정상" }],
+    e2e_evidence: [{ claim: "발행됨", observed: true, detail: "POST 200" }] });
+  assert.equal(weakSelfReport.verdict, "static-only");
+  assert.match(weakSelfReport.reason, /weak E2E evidence/);
 
   const silentFail = gateVerdict({ target: "publish flow",
     static_checks: [{ dim: "integration", passed: true, evidence: "빌드 통과" }],
@@ -101,7 +109,7 @@ core.setPlan({ api_key: "tkey", plan: "pro" });   // unlimited key for handoff t
 {
   const { manifest } = gateVerdict({ target: "x",
     static_checks: [{ dim: "security", passed: true, evidence: "RLS on" }],
-    e2e_evidence: [{ claim: "저장됨", observed: true, detail: "rows +1" }] });
+    e2e_evidence: [obs("저장됨", "database rows increased by one", "db-delta", "db:rows:+1")] });
   const r = core.pass({ api_key: "tkey", snapshot: { context: { goal: "verified handoff" } }, verify_manifest: manifest });
   assert.equal(r.verified, true);
   const got = core.receive({ code: r.code });
@@ -224,11 +232,13 @@ core.setPlan({ api_key: "tkey", plan: "pro" });   // unlimited key for handoff t
     target: "checkout/payment", capsule: "BTN-H-XYZ", api_key: "indep-verifier-key-1",  // separate identity
     environment: { os: "ubuntu-24.04", node: "24.2" },
     static_checks: [{ dim: "integration", passed: true, evidence: "adapter wired" }],
-    e2e_evidence: [{ claim: "payment succeeds", observed: true, detail: "POST /pay 200 + order row +1" }],
+    e2e_evidence: [obs("payment succeeds", "POST /pay 200 + order row +1", "browser", "artifact:playwright.trace.zip")],
     artifacts: ["playwright.trace.zip", "network.har"],
   });
   assert.equal(receipt.kind, "baton.verification-receipt/v1");
   assert.equal(receipt.verdict, "verified");
+  assert.equal(receipt.evidence_assurance, "STRUCTURED");
+  assert.match(receipt.evidence_digest, /^[a-f0-9]{64}$/);
   assert.ok(receipt.signature && receipt.signature.length === 64);
   // attach to a handoff → badge survives, receipt surfaced on receive
   const r = core.pass({ api_key: "tkey", snapshot: { context: { goal: "signed handoff" } }, receipt });
@@ -253,7 +263,7 @@ core.setPlan({ api_key: "tkey", plan: "pro" });   // unlimited key for handoff t
     verify: {
       environment: { os: "mac", node: "24" },
       static_checks: [{ dim: "integration", passed: true, evidence: "wired" }],
-      e2e_evidence: [{ claim: "runs", observed: true, detail: "HTTP 200 + row +1" }],
+      e2e_evidence: [obs("runs", "HTTP 200 + row +1", "http", "http:POST:/run:200")],
       artifacts: ["trace.zip"],
     },
   });
@@ -292,11 +302,11 @@ core.setPlan({ api_key: "tkey", plan: "pro" });   // unlimited key for handoff t
   core.signup({ api_key: "tm-expert-key" });
   const recA = core.verify({ target: "TM script", verifier: "TM-expert-15yr", api_key: "tm-expert-key",
     static_checks: [{ dim: "d", passed: true, evidence: "e" }],
-    e2e_evidence: [{ claim: "call flow works", observed: true, detail: "실통화 관측" }] });
+    e2e_evidence: [obs("call flow works", "실제 통화 흐름 전체 관측 완료", "manual", "artifact:call-audit-1")] });
   const a = core.pass({ api_key: "tkey", receipt: recA, snapshot: { context: { goal: "TM 상담 스크립트 고도화" }, next_steps: ["A/B 테스트"] } });
   // dept B: self-attested only
   const b = core.pass({ api_key: "tkey", snapshot: { context: { goal: "회계 마감 자동화" }, next_steps: ["감사"] },
-    verify: { static_checks: [{ dim: "d", passed: true, evidence: "e" }], e2e_evidence: [{ claim: "합계 맞음", observed: true, detail: "수기대조" }] } });
+    verify: { static_checks: [{ dim: "d", passed: true, evidence: "e" }], e2e_evidence: [obs("합계 맞음", "원장과 결과 합계를 수기로 대조함", "manual", "artifact:ledger-check-1")] } });
   // dept C: unverified
   const c = core.pass({ api_key: "tkey", snapshot: { context: { goal: "마케팅 카피" }, next_steps: ["게시"] } });
 
@@ -318,13 +328,13 @@ core.setPlan({ api_key: "tkey", plan: "pro" });   // unlimited key for handoff t
     snapshot: { context: { goal: "self-claim attack" } },
     verify: { verifier: "independent-auditor-jane",
       static_checks: [{ dim: "d", passed: true, evidence: "e" }],
-      e2e_evidence: [{ claim: "works", observed: true, detail: "200" }] } });
+      e2e_evidence: [obs("works", "HTTP request returned status 200", "http", "http:GET:/health:200")] } });
   assert.equal(atk.tier, "self-attested");                 // NOT independent, despite the name
   assert.match(core.receive({ code: atk.code }).badge, /🔏 SEALED/);
 
   // attack B: producer verifies with THEIR OWN key, then attaches → still self-attested
   const ownRec = core.verify({ target: "x", verifier: "me", api_key: "producer-key-1",
-    static_checks: [{ dim: "d", passed: true, evidence: "e" }], e2e_evidence: [{ claim: "w", observed: true, detail: "200" }] });
+    static_checks: [{ dim: "d", passed: true, evidence: "e" }], e2e_evidence: [obs("w", "HTTP request returned status 200", "http", "http:GET:/health:200")] });
   const b = core.pass({ api_key: "producer-key-1", snapshot: { context: { goal: "own-key" } }, receipt: ownRec });
   assert.equal(b.tier, "self-attested");                   // same identity → not independent
 
@@ -332,7 +342,7 @@ core.setPlan({ api_key: "tkey", plan: "pro" });   // unlimited key for handoff t
   core.signup({ api_key: "auditor-key-9" });
   core.signup({ api_key: "producer-key-1" });   // both sides must be registered for independent
   const indRec = core.verify({ target: "x", verifier: "auditor", api_key: "auditor-key-9",
-    static_checks: [{ dim: "d", passed: true, evidence: "e" }], e2e_evidence: [{ claim: "w", observed: true, detail: "200" }] });
+    static_checks: [{ dim: "d", passed: true, evidence: "e" }], e2e_evidence: [obs("w", "HTTP request returned status 200", "http", "http:GET:/health:200")] });
   const c2 = core.pass({ api_key: "producer-key-1", snapshot: { context: { goal: "cross" } }, receipt: indRec });
   assert.equal(c2.tier, "independent");
   // MED fix: anonymous producer can NOT earn independent (can't be independent of an unknown party)

@@ -8,6 +8,16 @@ import { openStore } from "./store.js";
 import { makeCore } from "./core.js";
 import { registerSpiderTools } from "./spider.js";
 import { planVerify, gateVerdict } from "./verify.js";
+import { readFileSync } from "node:fs";
+
+const PACKAGE = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+const VERSION = PACKAGE.version;
+const BUILD_COMMIT = process.env.RAILWAY_GIT_COMMIT_SHA || process.env.GIT_SHA || "unknown";
+const evidenceSchema = z.object({
+  claim: z.string(), observed: z.boolean(), detail: z.string(),
+  method: z.enum(["http", "db-delta", "command", "browser", "artifact", "manual"]).optional(),
+  evidence_refs: z.array(z.string()).optional(),
+});
 
 const store = openStore(process.env.BATON_DB || "./data/baton.db");
 const core = makeCore(store);
@@ -19,7 +29,7 @@ const json = (o) => ({ content: [{ type: "text", text: JSON.stringify(o, null, 2
 // defaultApiKey (from the request's Authorization: Bearer header) is auto-attached to any
 // tool that takes api_key, so a paid user sets the header once instead of passing it every call.
 export function buildServer(defaultApiKey = null) {
-  const server = new McpServer({ name: "baton", version: "0.1.0" });
+  const server = new McpServer({ name: "baton", version: VERSION });
   registerTools(server, defaultApiKey);
   registerSpiderTools(server);
   return server;
@@ -100,7 +110,7 @@ server.tool("baton_pass",
     ttl_hours: z.number().optional(),
     verify: z.object({
       static_checks: z.array(z.object({ dim: z.string(), passed: z.boolean(), evidence: z.string() })).optional(),
-      e2e_evidence: z.array(z.object({ claim: z.string(), observed: z.boolean(), detail: z.string() })).optional(),
+      e2e_evidence: z.array(evidenceSchema).optional(),
       environment: z.record(z.any()).optional(), artifacts: z.array(z.string()).optional(),
       verifier: z.string().optional(),
     }).optional().describe("관측 증거를 바로 첨부 → 서버가 서명 영수증 발급(E2E 관측 있어야 verified). verify를 따로 안 불러도 됨"),
@@ -165,7 +175,7 @@ server.tool("baton_verify",
     capsule: z.string().optional().describe("검증하는 핸드오프 코드/해시"),
     environment: z.record(z.any()).optional().describe("재현 환경(os·runtime·commit 등)"),
     static_checks: z.array(z.object({ dim: z.string(), passed: z.boolean(), evidence: z.string() })).optional(),
-    e2e_evidence: z.array(z.object({ claim: z.string(), observed: z.boolean(), detail: z.string() })).optional().describe("실제 실행·관측 결과(HTTP 상태·DB delta·출력)"),
+    e2e_evidence: z.array(evidenceSchema).optional().describe("실제 실행·관측 결과. VERIFIED에는 method와 evidence_refs가 필요하며 없으면 STATIC-ONLY로 안전하게 강등"),
     artifacts: z.array(z.string()).optional().describe("증거 아티팩트 다이제스트(trace·har·screenshot·log)"),
     api_key: z.string().optional().describe("검증자 계정 키 — 독립검증(🕸️)은 생산자와 다른 등록계정일 때만 인정. 없으면 자가증명(🔏). Authorization 헤더로도 자동첨부"),
   },
@@ -194,7 +204,11 @@ if (process.env.BATON_HTTP === "1") {
     next();
   });
   app.use(express.json({ limit: "256kb" }));  // tighter cap — DoS surface
-  app.get("/health", (_q, r) => r.json({ ok: true, name: "baton", version: "0.1.0" }));
+  app.get("/health", (_q, r) => r.json({
+    ok: true, name: "baton", version: VERSION,
+    build: { commit: BUILD_COMMIT }, uptime_seconds: Math.floor(process.uptime()),
+    capabilities: { structured_evidence_gate: true, evidence_digest: true, signed_receipts: true },
+  }));
   // Rate limits: writes are cheap to abuse, so cap them per-IP. Reads a bit looser.
   const rlWrite = rateLimit({ windowMs: 60_000, max: 30 });
   const rlRead = rateLimit({ windowMs: 60_000, max: 120 });

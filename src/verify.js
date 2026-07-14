@@ -3,7 +3,20 @@
 // (HTTP status, DB row delta, real model output), never static reasoning alone.
 // And per arch review H1, trust is established on the RECEIVER side, not the sender's.
 import { BUILTIN_TRAPS, classify } from "./spider.js";
-import { signReceipt, verifyReceiptSig } from "./crypto.js";
+import { digestCanonical, signReceipt, verifyReceiptSig } from "./crypto.js";
+
+const OBSERVATION_METHODS = new Set(["http", "db-delta", "command", "browser", "artifact", "manual"]);
+const EVIDENCE_REF = /^(?:sha256:[a-f0-9]{64}|https?:\/\/|artifact:|trace:|db:|http:|command:)/i;
+
+function weakObservation(e) {
+  if (e?.observed !== true) return null;
+  if (!e.claim?.trim()) return "missing claim";
+  if (!e.detail?.trim() || e.detail.trim().length < 8) return "detail is too short";
+  if (!OBSERVATION_METHODS.has(e.method)) return "missing/invalid method";
+  if (!Array.isArray(e.evidence_refs) || e.evidence_refs.length === 0) return "missing evidence_refs";
+  if (e.evidence_refs.some((ref) => typeof ref !== "string" || !EVIDENCE_REF.test(ref))) return "invalid evidence_ref";
+  return null;
+}
 
 // Plan: what a receiver's spider should statically check AND what it must E2E-probe.
 export function planVerify({ target, claims = [] } = {}) {
@@ -36,14 +49,17 @@ export function planVerify({ target, claims = [] } = {}) {
 export function gateVerdict({ verifier = "receiver-spider", target, static_checks = [], e2e_evidence = [] } = {}) {
   const staticPass = static_checks.length > 0 && static_checks.every((s) => s.passed);
   const unobserved = e2e_evidence.filter((e) => e.observed !== true);
-  const e2eObserved = e2e_evidence.length > 0 && unobserved.length === 0;
+  const weak = e2e_evidence.map((e) => ({ claim: e?.claim || "(unknown)", reason: weakObservation(e) })).filter((x) => x.reason);
+  const e2eObserved = e2e_evidence.length > 0 && unobserved.length === 0 && weak.length === 0;
   // The hard rule: no E2E observation → cannot be verified, only static-only.
   let verdict, reason;
   if (!e2eObserved) {
     verdict = "static-only";
     reason = e2e_evidence.length === 0
       ? "no E2E evidence supplied — a passing build ≠ working behavior; run the flow and observe a side effect"
-      : `${unobserved.length}/${e2e_evidence.length} E2E claim(s) not observed: ${unobserved.map((e) => `"${e.claim}"`).join(", ")}. Every claim needs observed:true.`;
+      : unobserved.length
+        ? `${unobserved.length}/${e2e_evidence.length} E2E claim(s) not observed: ${unobserved.map((e) => `"${e.claim}"`).join(", ")}. Every claim needs observed:true.`
+        : `weak E2E evidence: ${weak.map((x) => `"${x.claim}" (${x.reason})`).join(", ")}. VERIFIED requires method + machine-checkable evidence_refs.`;
   } else if (!staticPass) {
     verdict = "failed";
     reason = static_checks.length === 0
@@ -57,6 +73,7 @@ export function gateVerdict({ verifier = "receiver-spider", target, static_check
   const manifest = {
     verifier, target, method: e2eObserved ? "static+e2e" : "static",
     static_checks, e2e_evidence, verdict, reason,
+    evidence_assurance: e2eObserved ? "STRUCTURED" : "INSUFFICIENT",
     // legacy manifest badge: does NOT assert independence (that's decided at consumption by identity)
     badge: verdict === "verified" ? "🕸️ VERIFIED" : verdict === "failed" ? "🔴 FAILED" : "⚪ STATIC-ONLY",
     attested: `${static_checks.length} static checks, ${e2e_evidence.filter((e) => e.observed).length}/${e2e_evidence.length} E2E observations`,
@@ -83,6 +100,7 @@ export function badgeFor(verdict, independent) {
 export function issueReceipt({ verifier, verifier_key_hash = null, target, capsule, environment, static_checks = [], e2e_evidence = [], artifacts = [], issued_at = 0 } = {}) {
   const v = verifier || "receiver-spider";
   const { verdict, reason } = gateVerdict({ verifier: v, target, static_checks, e2e_evidence });
+  const evidence_digest = digestCanonical({ environment: environment || {}, static_checks, e2e_evidence, artifacts });
   const body = {
     kind: "baton.verification-receipt/v1",
     capsule: capsule || null,                 // hash of the handoff this verifies
@@ -93,6 +111,8 @@ export function issueReceipt({ verifier, verifier_key_hash = null, target, capsu
     static_checks,
     observed: e2e_evidence,                    // what was actually run + observed
     artifacts,                                 // trace / har / screenshots / logs digests
+    evidence_digest,                           // one checksum binding every evidence input
+    evidence_assurance: verdict === "verified" ? "STRUCTURED" : "INSUFFICIENT",
     verdict,                                   // verified | static-only | failed
     reason,                                    // WHY this verdict (transparency)
     issued_at,
