@@ -76,6 +76,30 @@ export function openStore(path = "./data/baton.db") {
     CREATE TABLE IF NOT EXISTS used_txs (
       tx_hash TEXT PRIMARY KEY, chain TEXT, invoice_id TEXT, created_at INTEGER
     );
+
+    -- Operations layer: task DAG, Git-bound evidence, and append-only cost ledger.
+    CREATE TABLE IF NOT EXISTS tasks (
+      id TEXT PRIMARY KEY, owner_hash TEXT NOT NULL, room_id TEXT, title TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'todo', assignee TEXT, created_at INTEGER, updated_at INTEGER
+    );
+    CREATE TABLE IF NOT EXISTS task_edges (
+      owner_hash TEXT NOT NULL, from_task_id TEXT NOT NULL, to_task_id TEXT NOT NULL,
+      edge_type TEXT NOT NULL, created_at INTEGER,
+      PRIMARY KEY(owner_hash,from_task_id,to_task_id,edge_type)
+    );
+    CREATE TABLE IF NOT EXISTS git_evidence (
+      id TEXT PRIMARY KEY, owner_hash TEXT NOT NULL, task_id TEXT, repository TEXT NOT NULL,
+      commit_sha TEXT NOT NULL, branch TEXT, diff_sha256 TEXT, test_command TEXT,
+      test_exit_code INTEGER, artifact_refs TEXT, recorded_at INTEGER
+    );
+    CREATE TABLE IF NOT EXISTS cost_events (
+      id TEXT PRIMARY KEY, owner_hash TEXT NOT NULL, task_id TEXT, provider TEXT NOT NULL,
+      model TEXT, input_tokens INTEGER DEFAULT 0, output_tokens INTEGER DEFAULT 0,
+      amount_usd REAL NOT NULL, source TEXT NOT NULL, idempotency_key TEXT NOT NULL,
+      occurred_at INTEGER, UNIQUE(owner_hash,idempotency_key)
+    );
+    CREATE INDEX IF NOT EXISTS idx_tasks_owner ON tasks(owner_hash,updated_at);
+    CREATE INDEX IF NOT EXISTS idx_cost_owner ON cost_events(owner_hash,occurred_at);
   `);
 
   // Additive migration: older corpus tables predate ip_hash (verified-forgery defense).
@@ -316,6 +340,50 @@ export function openStore(path = "./data/baton.db") {
     activeRoomCount(keyHash) {
       // rooms don't carry an owner column in MVP; count via a usage counter instead.
       return this.getUsage(keyHash, "rooms_active", "all");
+    },
+
+    // ---- operations: task graph / Git evidence / cost ledger ----
+    createTask(row) {
+      db.prepare(`INSERT INTO tasks(id,owner_hash,room_id,title,status,assignee,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)`)
+        .run(row.id, row.owner_hash, row.room_id || null, row.title, row.status || "todo", row.assignee || null, now(), now());
+      return this.getTask(row.owner_hash, row.id);
+    },
+    getTask(ownerHash, id) { return db.prepare(`SELECT * FROM tasks WHERE owner_hash=? AND id=?`).get(ownerHash, id) || null; },
+    updateTask(ownerHash, id, status) {
+      db.prepare(`UPDATE tasks SET status=?,updated_at=? WHERE owner_hash=? AND id=?`).run(status, now(), ownerHash, id);
+      return this.getTask(ownerHash, id);
+    },
+    addTaskEdge(ownerHash, from, to, type) {
+      db.prepare(`INSERT OR IGNORE INTO task_edges(owner_hash,from_task_id,to_task_id,edge_type,created_at) VALUES(?,?,?,?,?)`)
+        .run(ownerHash, from, to, type, now());
+    },
+    taskGraph(ownerHash) {
+      return {
+        tasks: db.prepare(`SELECT * FROM tasks WHERE owner_hash=? ORDER BY created_at`).all(ownerHash),
+        edges: db.prepare(`SELECT from_task_id,to_task_id,edge_type FROM task_edges WHERE owner_hash=? ORDER BY created_at`).all(ownerHash),
+      };
+    },
+    addGitEvidence(row) {
+      db.prepare(`INSERT INTO git_evidence(id,owner_hash,task_id,repository,commit_sha,branch,diff_sha256,test_command,test_exit_code,artifact_refs,recorded_at)
+                  VALUES(?,?,?,?,?,?,?,?,?,?,?)`).run(row.id,row.owner_hash,row.task_id||null,row.repository,row.commit_sha,row.branch||null,row.diff_sha256||null,row.test_command||null,row.test_exit_code??null,JSON.stringify(row.artifact_refs||[]),now());
+      return { ...row, artifact_refs: row.artifact_refs || [] };
+    },
+    gitEvidence(ownerHash, taskId = null) {
+      const rows = taskId
+        ? db.prepare(`SELECT * FROM git_evidence WHERE owner_hash=? AND task_id=? ORDER BY recorded_at DESC`).all(ownerHash,taskId)
+        : db.prepare(`SELECT * FROM git_evidence WHERE owner_hash=? ORDER BY recorded_at DESC LIMIT 200`).all(ownerHash);
+      return rows.map((r) => ({ ...r, artifact_refs: JSON.parse(r.artifact_refs || "[]") }));
+    },
+    addCostEvent(row) {
+      const inserted = db.prepare(`INSERT OR IGNORE INTO cost_events(id,owner_hash,task_id,provider,model,input_tokens,output_tokens,amount_usd,source,idempotency_key,occurred_at)
+                                   VALUES(?,?,?,?,?,?,?,?,?,?,?)`).run(row.id,row.owner_hash,row.task_id||null,row.provider,row.model||null,row.input_tokens||0,row.output_tokens||0,row.amount_usd,row.source,row.idempotency_key,row.occurred_at||now()).changes;
+      return { inserted: !!inserted };
+    },
+    costSummary(ownerHash) {
+      const totals = db.prepare(`SELECT COUNT(*) events,COALESCE(SUM(amount_usd),0) amount_usd,COALESCE(SUM(input_tokens),0) input_tokens,COALESCE(SUM(output_tokens),0) output_tokens FROM cost_events WHERE owner_hash=?`).get(ownerHash);
+      const by_provider = db.prepare(`SELECT provider,model,COUNT(*) events,SUM(amount_usd) amount_usd,SUM(input_tokens) input_tokens,SUM(output_tokens) output_tokens FROM cost_events WHERE owner_hash=? GROUP BY provider,model ORDER BY amount_usd DESC`).all(ownerHash);
+      const by_task = db.prepare(`SELECT task_id,COUNT(*) events,SUM(amount_usd) amount_usd FROM cost_events WHERE owner_hash=? GROUP BY task_id ORDER BY amount_usd DESC`).all(ownerHash);
+      return { totals, by_provider, by_task };
     },
 
     // ---- crypto invoices (M3-5) ----

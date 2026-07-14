@@ -70,6 +70,10 @@ export function makeCore(store) {
     if (!apiKey || codeHash(apiKey) !== room.owner_hash) throw new Error("Only the room owner can do this.");
     return room;
   };
+  const ownerKey = (apiKey) => {
+    if (!apiKey || String(apiKey).length < 12) throw new Error("api_key (12+ characters) is required for private operations data.");
+    return codeHash(String(apiKey));
+  };
 
   return {
     // ---------- SIGNUP (funnel) ----------
@@ -254,6 +258,63 @@ export function makeCore(store) {
       ownerOf(room_id, api_key);
       return { approved: store.approveMember(room_id, member_id) };
     },
+
+    // ---------- OPERATIONS: TASK GRAPH / GIT EVIDENCE / COST ----------
+    taskCreate({ api_key, title, room_id = null, assignee = null, depends_on = [] } = {}) {
+      const owner = ownerKey(api_key);
+      if (!title?.trim()) throw new Error("title is required.");
+      if (room_id) ownerOf(room_id, api_key);
+      for (const dep of depends_on || []) if (!store.getTask(owner, dep)) throw new Error(`dependency task not found: ${dep}`);
+      const id = "tsk_" + participantId().slice(2);
+      const task = store.createTask({ id, owner_hash: owner, room_id, title: title.trim().slice(0, 240), assignee });
+      for (const dep of depends_on || []) store.addTaskEdge(owner, dep, id, "blocks");
+      return { task, depends_on };
+    },
+    taskLink({ api_key, from_task_id, to_task_id, edge_type = "blocks" } = {}) {
+      const owner = ownerKey(api_key);
+      if (!store.getTask(owner, from_task_id) || !store.getTask(owner, to_task_id)) throw new Error("both tasks must exist and belong to this account.");
+      if (from_task_id === to_task_id) throw new Error("a task cannot depend on itself.");
+      if (!["blocks","relates","supersedes"].includes(edge_type)) throw new Error("edge_type must be blocks, relates, or supersedes.");
+      if (edge_type === "blocks") {
+        const g = store.taskGraph(owner); const next = new Map();
+        for (const e of g.edges.filter((e) => e.edge_type === "blocks")) (next.get(e.from_task_id) || next.set(e.from_task_id, []).get(e.from_task_id)).push(e.to_task_id);
+        const seen = new Set(); const walk = (n) => n === from_task_id || (!seen.has(n) && (seen.add(n), (next.get(n) || []).some(walk)));
+        if (walk(to_task_id)) throw new Error("edge would create a task cycle.");
+      }
+      store.addTaskEdge(owner, from_task_id, to_task_id, edge_type);
+      return { linked: true, from_task_id, to_task_id, edge_type };
+    },
+    taskUpdate({ api_key, task_id, status } = {}) {
+      const owner = ownerKey(api_key);
+      if (!["todo","running","blocked","done","cancelled"].includes(status)) throw new Error("invalid task status.");
+      if (!store.getTask(owner, task_id)) throw new Error("task not found.");
+      return { task: store.updateTask(owner, task_id, status) };
+    },
+    taskGraph({ api_key } = {}) { return store.taskGraph(ownerKey(api_key)); },
+    gitRecord({ api_key, task_id = null, repository, commit_sha, branch = null, diff_sha256 = null, test_command = null, test_exit_code = null, artifact_refs = [] } = {}) {
+      const owner = ownerKey(api_key);
+      if (task_id && !store.getTask(owner, task_id)) throw new Error("task not found.");
+      if (!repository?.trim()) throw new Error("repository is required.");
+      if (!/^[a-f0-9]{7,64}$/i.test(commit_sha || "")) throw new Error("commit_sha must be a 7-64 character hex Git SHA.");
+      if (diff_sha256 && !/^[a-f0-9]{64}$/i.test(diff_sha256)) throw new Error("diff_sha256 must be 64 hex characters.");
+      if (!Array.isArray(artifact_refs) || artifact_refs.length > 50) throw new Error("artifact_refs must be an array of at most 50 items.");
+      const id = "git_" + participantId().slice(2);
+      return { evidence: store.addGitEvidence({ id, owner_hash: owner, task_id, repository: repository.trim(), commit_sha, branch, diff_sha256, test_command, test_exit_code, artifact_refs }) };
+    },
+    gitEvidence({ api_key, task_id = null } = {}) { return { evidence: store.gitEvidence(ownerKey(api_key), task_id) }; },
+    costRecord({ api_key, task_id = null, provider, model = null, input_tokens = 0, output_tokens = 0, amount_usd, source = "reported", idempotency_key } = {}) {
+      const owner = ownerKey(api_key);
+      if (task_id && !store.getTask(owner, task_id)) throw new Error("task not found.");
+      if (!provider?.trim() || !idempotency_key?.trim()) throw new Error("provider and idempotency_key are required.");
+      const amount = Number(amount_usd);
+      if (!Number.isFinite(amount) || amount < 0 || amount > 1_000_000) throw new Error("amount_usd is invalid.");
+      const cleanInt = (v) => Number.isSafeInteger(Number(v)) && Number(v) >= 0 ? Number(v) : null;
+      const input = cleanInt(input_tokens), output = cleanInt(output_tokens);
+      if (input == null || output == null) throw new Error("token counts must be non-negative integers.");
+      const id = "cst_" + participantId().slice(2);
+      return { ...store.addCostEvent({ id, owner_hash: owner, task_id, provider: provider.trim(), model, input_tokens: input, output_tokens: output, amount_usd: amount, source, idempotency_key: idempotency_key.trim() }), id };
+    },
+    costSummary({ api_key } = {}) { return store.costSummary(ownerKey(api_key)); },
 
     // ---------- HANDOFF ----------
     // The client model fills `snapshot` in the BATON Snapshot v1 shape. We scrub secrets,

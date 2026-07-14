@@ -396,4 +396,24 @@ core.setPlan({ api_key: "tkey", plan: "pro" });   // unlimited key for handoff t
   ok("room→board: pass into room → owner consolidates the whole room (no manual codes)");
 }
 
-console.log(`\n🕸️  BATON: ${pass}/22 groups passed\n`);
+// 23. operations layer: task DAG + Git evidence + idempotent cost ledger
+{
+  const key = "ops-owner-key-123";
+  const a = core.taskCreate({ api_key: key, title: "Implement trust core" }).task;
+  const b = core.taskCreate({ api_key: key, title: "Run verification", depends_on: [a.id] }).task;
+  assert.equal(core.taskGraph({ api_key: key }).edges[0].edge_type, "blocks");
+  assert.throws(() => core.taskLink({ api_key: key, from_task_id: b.id, to_task_id: a.id, edge_type: "blocks" }), /cycle/);
+  assert.equal(core.taskGraph({ api_key: "different-owner-key" }).tasks.some((t) => t.id === a.id), false);
+  assert.equal(core.taskUpdate({ api_key: key, task_id: a.id, status: "done" }).task.status, "done");
+  const git = core.gitRecord({ api_key: key, task_id: a.id, repository: "vinsenzo83/baton", commit_sha: "f48b600", branch: "main", diff_sha256: "a".repeat(64), test_command: "npm test", test_exit_code: 0, artifact_refs: ["artifact:test-log"] });
+  assert.equal(core.gitEvidence({ api_key: key, task_id: a.id }).evidence[0].id, git.evidence.id);
+  assert.throws(() => core.gitRecord({ api_key: key, repository: "x", commit_sha: "not-a-sha" }), /commit_sha/);
+  const c1 = core.costRecord({ api_key: key, task_id: a.id, provider: "openai", model: "gpt", input_tokens: 100, output_tokens: 20, amount_usd: 0.012, idempotency_key: "run-1" });
+  const c2 = core.costRecord({ api_key: key, task_id: a.id, provider: "openai", amount_usd: 0.012, idempotency_key: "run-1" });
+  assert.equal(c1.inserted, true); assert.equal(c2.inserted, false);
+  const cost = core.costSummary({ api_key: key });
+  assert.equal(cost.totals.events, 1); assert.equal(cost.totals.amount_usd, 0.012);
+  ok("operations: cycle-safe task DAG · Git evidence · idempotent cost ledger");
+}
+
+console.log(`\n🕸️  BATON: ${pass}/23 groups passed\n`);

@@ -52,6 +52,9 @@ Flip `verdict` to `"verified"` without re-signing and the badge is refused. A pa
 | **Handoff** | `baton_pass` `baton_receive` `baton_diff` `baton_revoke` | Seal a work capsule into a code (`BTN-H-…`), hand it over, diff versions. Body encrypted with a code-derived key — the server never sees plaintext |
 | **Verify** | `baton_verify` `baton_verify_plan` `baton_consolidate` + `spider_*` ×6 | Independent verifier replays and issues the signed receipt (no observation, no 🕸️); `consolidate` gathers many handoffs into one result board by trust tier |
 | **Team rooms** *(supporting)* | `baton_create_room` `baton_new_invite` `baton_join` `baton_send` `baton_inbox` `baton_who` `baton_leave` `baton_kick` `baton_approve` `baton_close_room` | A persistent room the owner manages; people enter via rotating **invite codes** (`BTN-R-…`, 72h, re-issuable). Owner can kick, approve (optional gate), close. After join, activity is keyed by `member_id` |
+| **Operations** | `baton_task_*` `baton_git_*` `baton_cost_*` | Cycle-safe private task DAG, Git commit/diff/test evidence binding, and idempotent provider/model/task cost ledger |
+
+Operations dashboard: `/ops.html`. It stores only task metadata, Git evidence, and cost facts; BATON never asks for repository credentials.
 
 ## Design principles (from the security review)
 
