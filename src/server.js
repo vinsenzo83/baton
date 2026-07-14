@@ -105,6 +105,23 @@ server.tool("baton_git_evidence", "내 Git evidence 원장을 조회한다.", { 
 server.tool("baton_cost_record", "provider/model/task별 실제 또는 외부 청구 비용을 멱등 기록한다.",
   { api_key: z.string(), task_id: z.string().optional(), provider: z.string(), model: z.string().optional(), input_tokens: z.number().int().nonnegative().optional(), output_tokens: z.number().int().nonnegative().optional(), amount_usd: z.number().nonnegative(), source: z.string().optional(), idempotency_key: z.string() }, wrap((a) => core.costRecord(a)));
 server.tool("baton_cost_summary", "내 provider/model/task별 비용과 token 합계를 조회한다.", { api_key: z.string() }, wrap((a) => core.costSummary(a)));
+server.tool("baton_memory_put", "API key로 본문을 암호화해 세션 간 기억을 저장한다. 서버 검색은 제목·태그만 사용한다.",
+  { api_key:z.string(),title:z.string(),body:z.any(),tags:z.array(z.string()).optional(),ttl_hours:z.number().positive().optional() },wrap((a)=>core.memoryPut(a)));
+server.tool("baton_memory_search", "내 암호화 기억의 제목·태그 메타데이터를 검색한다.",
+  { api_key:z.string(),query:z.string().optional(),tags:z.array(z.string()).optional(),limit:z.number().int().positive().optional() },wrap((a)=>core.memorySearch(a)));
+server.tool("baton_memory_get", "API key로 선택한 기억 본문을 복호화한다.",{api_key:z.string(),memory_id:z.string()},wrap((a)=>core.memoryGet(a)));
+server.tool("baton_memory_delete", "선택한 기억을 삭제한다.",{api_key:z.string(),memory_id:z.string()},wrap((a)=>core.memoryDelete(a)));
+server.tool("baton_hub_register", "credential 없는 HTTPS MCP endpoint와 capability 메타데이터를 등록한다.",
+  {api_key:z.string(),name:z.string(),url:z.string(),capabilities:z.array(z.string()).optional()},wrap((a)=>core.hubRegister(a)));
+server.tool("baton_hub_observe", "해당 MCP endpoint에 결속된 VERIFIED Receipt로 health 상태를 갱신한다.",
+  {api_key:z.string(),server_id:z.string(),receipt:z.any()},wrap((a)=>core.hubObserve(a)));
+server.tool("baton_hub_list", "내 MCP registry를 조회한다.",{api_key:z.string()},wrap((a)=>core.hubList(a)));
+server.tool("baton_agent_register", "Marketplace에 agent profile을 등록한다. 평판은 독립 Receipt로만 쌓인다.",
+  {api_key:z.string(),name:z.string(),description:z.string().optional(),specialties:z.array(z.string()).optional()},wrap((a)=>core.agentRegister(a)));
+server.tool("baton_agent_record_result", "독립 검증자의 서명 Receipt를 agent 실적으로 기록한다.",
+  {api_key:z.string(),agent_id:z.string(),receipt:z.any()},wrap((a)=>core.agentRecordResult(a)));
+server.tool("baton_agent_list", "검증 실적순 agent marketplace를 조회한다.",
+  {specialty:z.string().optional(),limit:z.number().int().positive().optional()},wrap((a)=>core.agentList(a)));
 
 // ───────────────────────── HANDOFF ─────────────────────────
 server.tool("baton_pass",
@@ -222,7 +239,7 @@ if (process.env.BATON_HTTP === "1") {
   app.get("/health", (_q, r) => r.json({
     ok: true, name: "baton", version: VERSION,
     build: { commit: BUILD_COMMIT }, uptime_seconds: Math.floor(process.uptime()),
-    capabilities: { structured_evidence_gate: true, evidence_digest: true, signed_receipts: true, task_graph: true, git_evidence: true, cost_ledger: true },
+    capabilities: { structured_evidence_gate: true, evidence_digest: true, signed_receipts: true, task_graph: true, git_evidence: true, cost_ledger: true, encrypted_memory: true, mcp_hub: true, agent_marketplace: true },
   }));
   // Rate limits: writes are cheap to abuse, so cap them per-IP. Reads a bit looser.
   const rlWrite = rateLimit({ windowMs: 60_000, max: 30 });
@@ -256,6 +273,14 @@ if (process.env.BATON_HTTP === "1") {
   app.post("/api/git/evidence", rlRead, api((b) => core.gitEvidence(b)));
   app.post("/api/cost/record", rlWrite, api((b) => core.costRecord(b)));
   app.post("/api/cost/summary", rlRead, api((b) => core.costSummary(b)));
+  app.post("/api/memory/put",rlWrite,api((b)=>core.memoryPut(b)));
+  app.post("/api/memory/search",rlRead,api((b)=>core.memorySearch(b)));
+  app.post("/api/memory/get",rlRead,api((b)=>core.memoryGet(b)));
+  app.post("/api/memory/delete",rlWrite,api((b)=>core.memoryDelete(b)));
+  app.post("/api/hub/register",rlWrite,api((b)=>core.hubRegister(b)));
+  app.post("/api/hub/list",rlRead,api((b)=>core.hubList(b)));
+  app.post("/api/agent/register",rlWrite,api((b)=>core.agentRegister(b)));
+  app.post("/api/agent/list",rlRead,api((b)=>core.agentList(b)));
 
   // ── Shared spider corpus (M2-2), same shape spider_* tools speak (/v1/patterns) ──
   const { preparePattern } = await import("./corpus-scrub.js");

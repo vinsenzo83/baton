@@ -6,7 +6,7 @@
 //  - VERIFIED requires observed E2E evidence, never static-only (user's hard-won lesson)
 import { roomCode, handoffCode, normalizeCode } from "./ids.js";
 import { fenceUntrusted, injectionFlags, scrubSecrets } from "./prompt-guard.js";
-import { sealBody } from "./crypto.js";
+import { sealBody, openBody } from "./crypto.js";
 import { gateVerdict, issueReceipt, verifyReceipt, tierOf, badgeFor } from "./verify.js";
 import { planOf, monthKey, anonMonthly, isBillingOn } from "./plans.js";
 import { codeHash } from "./crypto.js";
@@ -315,6 +315,58 @@ export function makeCore(store) {
       return { ...store.addCostEvent({ id, owner_hash: owner, task_id, provider: provider.trim(), model, input_tokens: input, output_tokens: output, amount_usd: amount, source, idempotency_key: idempotency_key.trim() }), id };
     },
     costSummary({ api_key } = {}) { return store.costSummary(ownerKey(api_key)); },
+
+    // ---------- SHARED MEMORY (encrypted body; searchable metadata only) ----------
+    memoryPut({ api_key, title, body, tags = [], ttl_hours = null } = {}) {
+      const owner = ownerKey(api_key);
+      if (!title?.trim() || body == null) throw new Error("title and body are required.");
+      if (!Array.isArray(tags) || tags.length > 20) throw new Error("tags must contain at most 20 items.");
+      const cleanTags = [...new Set(tags.map((t)=>String(t).trim().toLowerCase()).filter(Boolean))];
+      const { text, redactions } = scrubSecrets(JSON.stringify(body));
+      const id = "mem_" + participantId().slice(2);
+      const ttl = ttl_hours == null ? null : Number(ttl_hours);
+      if (ttl != null && (!Number.isFinite(ttl) || ttl <= 0 || ttl > 24*365)) throw new Error("ttl_hours is invalid.");
+      const memory = store.putMemory({ id, owner_hash: owner, title: title.trim().slice(0,240), tags: cleanTags, sealed: sealBody(String(api_key), text), expires_at: ttl ? Date.now()+ttl*HOUR : null });
+      return { memory, secrets_redacted: redactions };
+    },
+    memorySearch({ api_key, query = "", tags = [], limit = 50 } = {}) { return { memories: store.searchMemories(ownerKey(api_key), { query, tags, limit }) }; },
+    memoryGet({ api_key, memory_id } = {}) {
+      const row = store.getMemory(ownerKey(api_key), memory_id); if (!row) throw new Error("memory not found.");
+      return { id: row.id, title: row.title, tags: JSON.parse(row.tags||"[]"), body: JSON.parse(openBody(String(api_key), row)), created_at: row.created_at };
+    },
+    memoryDelete({ api_key, memory_id } = {}) { return { deleted: store.deleteMemory(ownerKey(api_key), memory_id) }; },
+
+    // ---------- MCP HUB (metadata only; never stores credentials) ----------
+    hubRegister({ api_key, name, url, capabilities = [] } = {}) {
+      const owner=ownerKey(api_key); if(!name?.trim())throw new Error("name is required.");
+      let parsed; try{parsed=new URL(url);}catch{throw new Error("valid URL is required.");}
+      if(parsed.protocol!=="https:"||parsed.username||parsed.password)throw new Error("MCP URL must be credential-free HTTPS.");
+      const id="mcp_"+participantId().slice(2);
+      return { server:store.registerMcp({id,owner_hash:owner,name:name.trim().slice(0,100),url:parsed.toString(),capabilities}) };
+    },
+    hubObserve({ api_key, server_id, receipt } = {}) {
+      const owner=ownerKey(api_key), chk=verifyReceipt(receipt);
+      if(!chk.valid||receipt.verdict!=="verified"||!receipt.verifier_key_hash||receipt.target!==`mcp:${server_id}`)throw new Error("a registered verifier's VERIFIED receipt bound to mcp:<server_id> is required.");
+      const status=(receipt.observed||[]).every((x)=>x.observed)?"HEALTHY":"DEGRADED";
+      const server=store.observeMcp(owner,server_id,status,receipt); if(!server)throw new Error("MCP server not found."); return {server};
+    },
+    hubList({ api_key } = {}) { return { servers:store.listMcp(ownerKey(api_key)) }; },
+
+    // ---------- AGENT MARKETPLACE (reputation from independent receipts only) ----------
+    agentRegister({ api_key, name, description = null, specialties = [] } = {}) {
+      const owner=ownerKey(api_key); if(!name?.trim())throw new Error("name is required.");
+      if(!Array.isArray(specialties)||specialties.length>20)throw new Error("specialties must contain at most 20 items.");
+      const id="agt_"+participantId().slice(2);
+      return {agent:store.registerAgent({id,owner_hash:owner,name:name.trim().slice(0,100),description:description?.slice(0,1000),specialties:[...new Set(specialties.map((x)=>String(x).toLowerCase()))]})};
+    },
+    agentRecordResult({ api_key, agent_id, receipt } = {}) {
+      const owner=ownerKey(api_key); if(!store.agentOwned(owner,agent_id))throw new Error("agent not found or not owned by this account.");
+      const chk=verifyReceipt(receipt);
+      if(!chk.valid||receipt.verdict!=="verified")throw new Error("valid VERIFIED receipt required.");
+      if(!receipt.verifier_key_hash||receipt.verifier_key_hash===owner)throw new Error("marketplace reputation requires an independent registered verifier.");
+      return {recorded:store.addAgentResult({signature:receipt.signature,agent_id,verifier_key_hash:receipt.verifier_key_hash,target:receipt.target,verdict:receipt.verdict}),agent:store.agentProfile(agent_id)};
+    },
+    agentList({ specialty = null, limit = 50 } = {}) { return {agents:store.listAgents({specialty,limit})}; },
 
     // ---------- HANDOFF ----------
     // The client model fills `snapshot` in the BATON Snapshot v1 shape. We scrub secrets,

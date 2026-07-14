@@ -100,6 +100,25 @@ export function openStore(path = "./data/baton.db") {
     );
     CREATE INDEX IF NOT EXISTS idx_tasks_owner ON tasks(owner_hash,updated_at);
     CREATE INDEX IF NOT EXISTS idx_cost_owner ON cost_events(owner_hash,occurred_at);
+    CREATE TABLE IF NOT EXISTS memories (
+      id TEXT PRIMARY KEY, owner_hash TEXT NOT NULL, title TEXT NOT NULL, tags TEXT,
+      salt TEXT NOT NULL, iv TEXT NOT NULL, tag TEXT NOT NULL, ct TEXT NOT NULL,
+      created_at INTEGER, expires_at INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_memories_owner ON memories(owner_hash,created_at);
+    CREATE TABLE IF NOT EXISTS mcp_registry (
+      id TEXT PRIMARY KEY, owner_hash TEXT NOT NULL, name TEXT NOT NULL, url TEXT NOT NULL,
+      capabilities TEXT, status TEXT DEFAULT 'UNVERIFIED', receipt TEXT,
+      created_at INTEGER, checked_at INTEGER, UNIQUE(owner_hash,name)
+    );
+    CREATE TABLE IF NOT EXISTS agent_profiles (
+      id TEXT PRIMARY KEY, owner_hash TEXT NOT NULL, name TEXT NOT NULL, description TEXT,
+      specialties TEXT, created_at INTEGER, UNIQUE(owner_hash,name)
+    );
+    CREATE TABLE IF NOT EXISTS agent_results (
+      receipt_signature TEXT PRIMARY KEY, agent_id TEXT NOT NULL, verifier_key_hash TEXT,
+      target TEXT, verdict TEXT, recorded_at INTEGER
+    );
   `);
 
   // Additive migration: older corpus tables predate ip_hash (verified-forgery defense).
@@ -384,6 +403,46 @@ export function openStore(path = "./data/baton.db") {
       const by_provider = db.prepare(`SELECT provider,model,COUNT(*) events,SUM(amount_usd) amount_usd,SUM(input_tokens) input_tokens,SUM(output_tokens) output_tokens FROM cost_events WHERE owner_hash=? GROUP BY provider,model ORDER BY amount_usd DESC`).all(ownerHash);
       const by_task = db.prepare(`SELECT task_id,COUNT(*) events,SUM(amount_usd) amount_usd FROM cost_events WHERE owner_hash=? GROUP BY task_id ORDER BY amount_usd DESC`).all(ownerHash);
       return { totals, by_provider, by_task };
+    },
+    putMemory(row) {
+      db.prepare(`INSERT INTO memories(id,owner_hash,title,tags,salt,iv,tag,ct,created_at,expires_at) VALUES(?,?,?,?,?,?,?,?,?,?)`)
+        .run(row.id,row.owner_hash,row.title,JSON.stringify(row.tags||[]),row.sealed.salt,row.sealed.iv,row.sealed.tag,row.sealed.ct,now(),row.expires_at||null);
+      return { id: row.id, title: row.title, tags: row.tags || [] };
+    },
+    searchMemories(ownerHash, { query = "", tags = [], limit = 50 } = {}) {
+      let rows = db.prepare(`SELECT id,title,tags,created_at,expires_at FROM memories WHERE owner_hash=? AND (expires_at IS NULL OR expires_at>?) ORDER BY created_at DESC LIMIT 200`).all(ownerHash,now());
+      rows = rows.map((r) => ({ ...r, tags: JSON.parse(r.tags||"[]") }));
+      if (query) rows = rows.filter((r) => r.title.toLowerCase().includes(query.toLowerCase()));
+      if (tags.length) rows = rows.filter((r) => tags.every((t) => r.tags.includes(t)));
+      return rows.slice(0,Math.min(limit,100));
+    },
+    getMemory(ownerHash,id) { return db.prepare(`SELECT * FROM memories WHERE owner_hash=? AND id=? AND (expires_at IS NULL OR expires_at>?)`).get(ownerHash,id,now())||null; },
+    deleteMemory(ownerHash,id) { return db.prepare(`DELETE FROM memories WHERE owner_hash=? AND id=?`).run(ownerHash,id).changes>0; },
+    registerMcp(row) {
+      db.prepare(`INSERT INTO mcp_registry(id,owner_hash,name,url,capabilities,status,created_at) VALUES(?,?,?,?,?,'UNVERIFIED',?)
+                  ON CONFLICT(owner_hash,name) DO UPDATE SET url=excluded.url,capabilities=excluded.capabilities`).run(row.id,row.owner_hash,row.name,row.url,JSON.stringify(row.capabilities||[]),now());
+      return this.listMcp(row.owner_hash).find((x)=>x.name===row.name);
+    },
+    observeMcp(ownerHash,id,status,receipt) {
+      db.prepare(`UPDATE mcp_registry SET status=?,receipt=?,checked_at=? WHERE owner_hash=? AND id=?`).run(status,JSON.stringify(receipt),now(),ownerHash,id);
+      return db.prepare(`SELECT id,name,url,status,checked_at FROM mcp_registry WHERE owner_hash=? AND id=?`).get(ownerHash,id)||null;
+    },
+    listMcp(ownerHash) { return db.prepare(`SELECT id,name,url,capabilities,status,checked_at FROM mcp_registry WHERE owner_hash=? ORDER BY name`).all(ownerHash).map((r)=>({...r,capabilities:JSON.parse(r.capabilities||"[]")})); },
+    registerAgent(row) {
+      db.prepare(`INSERT INTO agent_profiles(id,owner_hash,name,description,specialties,created_at) VALUES(?,?,?,?,?,?)`).run(row.id,row.owner_hash,row.name,row.description||null,JSON.stringify(row.specialties||[]),now());
+      return this.agentProfile(row.id);
+    },
+    agentProfile(id) {
+      const r=db.prepare(`SELECT id,name,description,specialties,created_at FROM agent_profiles WHERE id=?`).get(id); if(!r)return null;
+      const stats=db.prepare(`SELECT COUNT(*) verified_jobs,COUNT(DISTINCT verifier_key_hash) independent_verifiers FROM agent_results WHERE agent_id=? AND verdict='verified'`).get(id);
+      return {...r,specialties:JSON.parse(r.specialties||"[]"),...stats};
+    },
+    agentOwned(ownerHash,id) { return !!db.prepare(`SELECT 1 FROM agent_profiles WHERE owner_hash=? AND id=?`).get(ownerHash,id); },
+    addAgentResult(row) { return db.prepare(`INSERT OR IGNORE INTO agent_results(receipt_signature,agent_id,verifier_key_hash,target,verdict,recorded_at) VALUES(?,?,?,?,?,?)`).run(row.signature,row.agent_id,row.verifier_key_hash,row.target,row.verdict,now()).changes>0; },
+    listAgents({ specialty = null, limit = 50 } = {}) {
+      let rows=db.prepare(`SELECT id FROM agent_profiles ORDER BY created_at DESC LIMIT 200`).all().map((r)=>this.agentProfile(r.id));
+      if(specialty)rows=rows.filter((r)=>r.specialties.includes(specialty));
+      return rows.sort((a,b)=>b.verified_jobs-a.verified_jobs).slice(0,Math.min(limit,100));
     },
 
     // ---- crypto invoices (M3-5) ----

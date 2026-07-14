@@ -56,6 +56,8 @@ Flip `verdict` to `"verified"` without re-signing and the badge is refused. A pa
 
 Operations dashboard: `/ops.html`. It stores only task metadata, Git evidence, and cost facts; BATON never asks for repository credentials.
 
+Network dashboard: `/network.html`. Shared Memory encrypts bodies under the account key and searches metadata only. MCP Hub rejects credential-bearing URLs. Marketplace reputation accepts only independent, server-signed VERIFIED receipts.
+
 ## Design principles (from the security review)
 
 - **Code-derived encryption.** The server stores only `ciphertext + code_hash`. Without the code, even the operator can't read the plaintext — the proof of "we can't lock you in."

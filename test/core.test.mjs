@@ -416,4 +416,29 @@ core.setPlan({ api_key: "tkey", plan: "pro" });   // unlimited key for handoff t
   ok("operations: cycle-safe task DAG · Git evidence · idempotent cost ledger");
 }
 
-console.log(`\n🕸️  BATON: ${pass}/23 groups passed\n`);
+// 24. encrypted memory + credential-free MCP hub + receipt-backed marketplace
+{
+  const owner="network-owner-key-123";
+  const mem=core.memoryPut({api_key:owner,title:"Launch decision",body:{decision:"ship",token:"sk-abcdefghijklmnopqrstuvwxyz123456"},tags:["launch","decision"]});
+  assert.ok(mem.secrets_redacted>0);
+  assert.equal(core.memorySearch({api_key:owner,tags:["launch"]}).memories.length,1);
+  assert.equal(core.memorySearch({api_key:"another-owner-key",tags:["launch"]}).memories.length,0);
+  assert.equal(core.memoryGet({api_key:owner,memory_id:mem.memory.id}).body.decision,"ship");
+
+  const hub=core.hubRegister({api_key:owner,name:"docs",url:"https://example.com/mcp",capabilities:["search"]}).server;
+  assert.equal(hub.status,"UNVERIFIED");
+  assert.throws(()=>core.hubRegister({api_key:owner,name:"bad",url:"http://127.0.0.1/mcp"}),/HTTPS/);
+
+  const agent=core.agentRegister({api_key:owner,name:"Verifier Agent",specialties:["security"]}).agent;
+  core.signup({api_key:"independent-market-auditor"});
+  const hubReceipt=core.verify({api_key:"independent-market-auditor",target:`mcp:${hub.id}`,static_checks:[{dim:"protocol",passed:true,evidence:"initialize"}],e2e_evidence:[obs("MCP initializes","initialize returned protocol and tools","http", "http:POST:/mcp:200")]});
+  assert.equal(core.hubObserve({api_key:owner,server_id:hub.id,receipt:hubReceipt}).server.status,"HEALTHY");
+  const receipt=core.verify({api_key:"independent-market-auditor",target:"agent-job-1",static_checks:[{dim:"security",passed:true,evidence:"suite"}],e2e_evidence:[obs("job works","HTTP and database side effect observed","db-delta","db:job:+1")]});
+  assert.equal(core.agentRecordResult({api_key:owner,agent_id:agent.id,receipt}).agent.verified_jobs,1);
+  assert.equal(core.agentRecordResult({api_key:owner,agent_id:agent.id,receipt}).recorded,false);
+  assert.equal(core.agentList({specialty:"security"}).agents[0].independent_verifiers,1);
+  assert.throws(()=>core.agentRecordResult({api_key:"wrong-owner-key",agent_id:agent.id,receipt}),/not owned/);
+  ok("network: encrypted shared memory · credential-free MCP hub · receipt-backed marketplace");
+}
+
+console.log(`\n🕸️  BATON: ${pass}/24 groups passed\n`);

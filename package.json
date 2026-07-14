@@ -1,6 +1,6 @@
 {
   "name": "baton-mcp",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "BATON — hand off AI work with a signed verification receipt (independent E2E-proven), over MCP",
   "main": "src/server.js",
   "directories": {
