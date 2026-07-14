@@ -77,36 +77,43 @@ a{color:var(--accent)}
 </head>
 <body>
 
-<button class="langtoggle" id="langtoggle" onclick="toggleLang()">한국어</button>
+<div class="langtoggle" style="cursor:default">BATON 0.4 · 한국어</div>
 
 <!-- GATE -->
 <div class="gate" id="gate">
-  <h1><span class="b">BATON</span> <span id="t-title">Live Room</span></h1>
-  <p id="t-lead">Join with a room code and messages appear in real time — no need to ask "check inbox."</p>
+  <h1><span class="b">BATON</span> <span id="t-title">실시간 협업방</span></h1>
+  <p id="t-lead">방 코드로 AI와 사람이 작업을 주고받고, 핸드오프를 검증 영수증과 함께 전달합니다.</p>
   <div class="tabs">
-    <div class="tab on" id="tabJoin" onclick="mode('join')">Join with code</div>
-    <div class="tab" id="tabNew" onclick="mode('new')">New room</div>
+    <div class="tab on" id="tabJoin" onclick="mode('join')">코드로 입장</div>
+    <div class="tab" id="tabNew" onclick="mode('new')">새 방 만들기</div>
   </div>
   <div id="joinFields">
-    <label id="t-l-code">Room code (BTN-R-…)</label>
+    <label id="t-l-code">방 코드 (BTN-R-…)</label>
     <input id="code" class="mono" placeholder="BTN-R-XXXX-XXXX-…" autocomplete="off">
   </div>
   <div id="newFields" style="display:none">
-    <label id="t-l-name">Room name (optional)</label>
-    <input id="rname" placeholder="e.g. Bongee-CMI collab" autocomplete="off">
+    <label id="t-l-name">방 이름 (선택)</label>
+    <input id="rname" placeholder="예: 신제품 검증 협업" autocomplete="off">
   </div>
-  <label id="t-l-alias">Your name</label>
-  <input id="alias" placeholder="e.g. boss / dev / partner" autocomplete="off">
+  <label id="t-l-alias">내 이름</label>
+  <input id="alias" placeholder="예: 기획 / 개발 / 검증자" autocomplete="off">
   <label id="t-l-key" style="display:flex;justify-content:space-between;align-items:center">
-    <span>Account key <span style="color:var(--ink3);font-weight:400">(optional — your plan's seats/limits)</span></span>
+    <span>계정 키 <span style="color:var(--ink3);font-weight:400">(선택 — 요금제·사용량 적용)</span></span>
   </label>
-  <input id="acckey" class="mono" placeholder="btn_… (leave blank for Free)" autocomplete="off">
-  <button class="btn" id="enter" onclick="enter()">Enter</button>
+  <input id="acckey" class="mono" placeholder="btn_… (무료 체험은 비워두기)" autocomplete="off">
+  <button class="btn" id="enter" onclick="enter()">입장</button>
   <div class="err" id="err"></div>
+  <div style="margin-top:16px;padding:13px;border:1px solid var(--line);border-radius:10px;color:var(--ink2);font-size:12px;line-height:1.7">
+    <b style="color:var(--ink)">BATON 0.4 신규 기능</b><br>
+    작업 그래프와 Git 증거로 인수인계를 추적하고, 비용 관제로 AI 사용 비용을 확인합니다.<br>
+    암호화 공유 기억·MCP 허브·독립 검증 기반 에이전트 마켓은 네트워크 화면에서 관리합니다.
+  </div>
   <div id="t-pricing" style="margin-top:20px;padding-top:16px;border-top:1px solid var(--line);font-size:12px;color:var(--ink2);line-height:1.7"></div>
   <div style="margin-top:10px;font-size:12.5px">
     <a href="https://eduverse-ai.app/baton-home" style="color:var(--accent);text-decoration:none">🏃 홈</a> ·
     <a href="/board.html" style="color:var(--accent);text-decoration:none">📊 결과 보드</a> ·
+    <a href="/ops.html" style="color:var(--accent);text-decoration:none">🧭 운영</a> ·
+    <a href="/network.html" style="color:var(--accent);text-decoration:none">🌐 네트워크</a> ·
     <a href="https://eduverse-ai.app/baton-guide" style="color:var(--accent);text-decoration:none">📖 소개</a> ·
     <a href="https://eduverse-ai.app/baton-tutorial" style="color:var(--accent);text-decoration:none">✅ 따라하기</a>
   </div>
@@ -116,8 +123,8 @@ a{color:var(--accent)}
 <div class="top" id="top" style="display:none">
   <span class="brand"><span class="b">B</span> BATON</span>
   <span class="rmeta"><span id="rname2"></span> · <span class="code mono" id="rcode"></span>
-    <button class="copy" id="t-copy" onclick="copyCode()">Copy code</button>
-    <span class="leave" id="t-leave" onclick="leave()" style="margin-left:10px">Leave</span></span>
+    <button class="copy" id="t-copy" onclick="copyCode()">코드 복사</button>
+    <span class="leave" id="t-leave" onclick="leave()" style="margin-left:10px">나가기</span></span>
 </div>
 <div id="ownerbar" style="display:none;align-items:center;gap:12px;flex-wrap:wrap;padding:8px 18px;border-bottom:1px solid var(--line);background:rgba(255,106,26,.06);font-size:12.5px">
   <span style="color:var(--accent);font-weight:700">방장</span>
@@ -132,8 +139,8 @@ a{color:var(--accent)}
   <div class="stream" id="stream"></div>
   <div class="compose">
     <select class="to-sel" id="to"><option value="">Everyone</option></select>
-    <input id="msg" placeholder="Type a message…" onkeydown="if(event.key==='Enter')doSend()">
-    <button id="t-send" onclick="doSend()">Send</button>
+    <input id="msg" placeholder="메시지를 입력하세요…" onkeydown="if(event.key==='Enter')doSend()">
+    <button id="t-send" onclick="doSend()">보내기</button>
   </div>
   <div class="statusbar" id="statusbar">
     <span class="conn"><span class="led"></span><span id="sb-conn">Connected</span></span>
@@ -150,12 +157,12 @@ let since = 0, poll = null, seenMembers = new Set();
 
 // ---- i18n (English default, Korean toggle) ----
 const I18N = {
-  en: { title:"Live Room", lead:'Join with a room code and messages appear in real time — no need to ask "check inbox."',
-    tabJoin:"Join with code", tabNew:"New room", lCode:"Room code (BTN-R-…)", lName:"Room name (optional)",
-    lAlias:"Your name", enter:"Enter", enterNew:"Create & enter", copy:"Copy code", leave:"Leave",
-    everyone:"Everyone", send:"Send", msgPh:"Type a message…", room:"Room",
-    needAlias:"Enter your name.", needCode:"Enter a room code.", reqFail:"Request failed", toName:(a)=>`to ${a}`,
-    pricing:"💡 Free: 5 trial handoffs · sign up for 20/mo · Pro $8 unlimited · Team $25 (10 sessions/room). Upgrade in your AI session with baton_upgrade." },
+  en: { title:"실시간 협업방", lead:'방 코드로 작업과 검증 결과를 실시간으로 주고받습니다.',
+    tabJoin:"코드로 입장", tabNew:"새 방 만들기", lCode:"방 코드 (BTN-R-…)", lName:"방 이름 (선택)",
+    lAlias:"내 이름", enter:"입장", enterNew:"방 만들고 입장", copy:"코드 복사", leave:"나가기",
+    everyone:"전체에게", send:"보내기", msgPh:"메시지를 입력하세요…", room:"협업방",
+    needAlias:"이름을 입력하세요.", needCode:"방 코드를 입력하세요.", reqFail:"요청에 실패했습니다", toName:(a)=>`→ ${a}`,
+    pricing:"💡 무료 체험 5회 · 가입 시 월 20회 · Pro $8 무제한 · Team $25(방당 10세션)." },
   ko: { title:"실시간 방", lead:'방 코드로 들어가면 쪽지가 실시간으로 뜹니다. 말로 "확인해줘" 안 해도 됩니다.',
     tabJoin:"코드로 입장", tabNew:"새 방 만들기", lCode:"방 코드 (BTN-R-…)", lName:"방 이름 (선택)",
     lAlias:"내 별명", enter:"입장", enterNew:"방 만들고 입장", copy:"코드 복사", leave:"나가기",
@@ -163,7 +170,7 @@ const I18N = {
     needAlias:"별명을 입력하세요.", needCode:"방 코드를 입력하세요.", reqFail:"요청 실패", toName:(a)=>`→ ${a}`,
     pricing:"💡 무료 체험 5회 · 가입 시 월 20회 · Pro $8 무제한 · Team $25(방당 10세션). AI 세션에서 baton_upgrade로 업그레이드." },
 };
-let LANG = (localStorage.getItem("baton_lang") || (navigator.language||"en").slice(0,2)) === "ko" ? "ko" : "en";
+let LANG = "ko";
 const T = () => I18N[LANG];
 function applyLang() {
   const t = T();
@@ -174,7 +181,7 @@ function applyLang() {
   $("t-copy").textContent = t.copy; $("t-leave").textContent = t.leave;
   $("to").options[0].textContent = t.everyone; $("t-send").textContent = t.send;
   $("msg").placeholder = t.msgPh;
-  $("langtoggle").textContent = LANG === "en" ? "한국어" : "English";
+  if ($("langtoggle")) $("langtoggle").textContent = "BATON 0.4 · 한국어";
   $("t-pricing").textContent = t.pricing;
   document.documentElement.lang = LANG;
 }

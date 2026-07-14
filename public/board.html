@@ -1,6 +1,6 @@
-<meta charset="utf-8">
+<!doctype html><html lang="ko"><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>BATON — Result Board</title>
+<title>BATON — 검증 결과 보드</title>
 <style>
   :root{
     --bg:#0e0f12; --panel:#15171c; --line:#22252c; --line2:#2b2f38;
@@ -58,7 +58,7 @@
 
 <div class="wrap">
   <header>
-    <h1>🏃 BATON <span class="run">Result Board</span></h1>
+    <h1>🏃 BATON <span class="run">검증 결과 보드</span></h1>
     <span class="sub">각 부서가 AI로 일한 결과를 · 검증 상태와 함께 · 한눈에</span>
   </header>
   <p class="lead">부서별 핸드오프 코드(<span style="font-family:var(--mono)">BTN-H-…</span>)를 넣으면, 무엇을 믿고(🕸️ 독립검증) 무엇을 더 봐야 하는지(🔏 자가증명 · ⚪ 미검증) 한 판에 보여줍니다. 사람이 판단하는 결정 보드예요.</p>
@@ -82,6 +82,8 @@ BTN-H-...."></textarea>
     <span style="display:inline-block;margin-top:10px">
       <a href="https://eduverse-ai.app/baton-home" style="color:var(--accent);text-decoration:none">🏃 홈</a> &nbsp;·&nbsp;
       <a href="https://eduverse-ai.app/baton" style="color:var(--accent);text-decoration:none">💬 방(채팅)</a> &nbsp;·&nbsp;
+      <a href="/ops.html" style="color:var(--accent);text-decoration:none">🧭 운영 대시보드</a> &nbsp;·&nbsp;
+      <a href="/network.html" style="color:var(--accent);text-decoration:none">🌐 네트워크</a> &nbsp;·&nbsp;
       <a href="https://eduverse-ai.app/baton-guide" style="color:var(--accent);text-decoration:none">📖 소개</a> &nbsp;·&nbsp;
       <a href="https://eduverse-ai.app/baton-tutorial" style="color:var(--accent);text-decoration:none">✅ 따라하기</a>
     </span>
@@ -100,10 +102,10 @@ function tierClass(d){
   return "unverified";
 }
 function badgeText(d){
-  if (d.error) return "⚠ UNREADABLE";
-  if (d.verified && d.tier === "independent") return "🕸️ VERIFIED";
-  if (d.verified) return "🔏 SEALED";
-  return "⚪ UNVERIFIED";
+  if (d.error) return "⚠ 읽기 실패";
+  if (d.verified && d.tier === "independent") return "🕸️ 독립 검증 완료";
+  if (d.verified) return "🔏 자기 검증 봉인";
+  return "⚪ 미검증";
 }
 
 async function run(payload){
@@ -137,7 +139,7 @@ function render(b){
   const depts = (b.departments || []).map((d) => {
     const k = tierClass(d);
     if (d.error) return `<div class="dept error"><div class="drow"><div><div class="dtitle">${esc(d.title||d.code)}</div>
-      <div class="dmeta">읽을 수 없음 — ${esc(d.error)}</div></div><span class="badge unverified">⚠ UNREADABLE</span></div>
+      <div class="dmeta">읽을 수 없음 — ${esc(d.error)}</div></div><span class="badge unverified">⚠ 읽기 실패</span></div>
       <div class="code">${esc(d.code)}</div></div>`;
     const steps = (d.next_steps||[]).map((s)=>`<span class="step">${esc(s)}</span>`).join("");
     return `<div class="dept ${k}">

@@ -58,6 +58,8 @@ Operations dashboard: `/ops.html`. It stores only task metadata, Git evidence, a
 
 Network dashboard: `/network.html`. Shared Memory encrypts bodies under the account key and searches metadata only. MCP Hub rejects credential-bearing URLs. Marketplace reputation accepts only independent, server-signed VERIFIED receipts.
 
+모든 공개 화면은 한국어를 기본으로 제공하며 `/dash.html`(협업방), `/board.html`(검증 결과), `/ops.html`(작업·Git·비용), `/network.html`(기억·MCP·에이전트)을 상호 연결한다.
+
 ## Design principles (from the security review)
 
 - **Code-derived encryption.** The server stores only `ciphertext + code_hash`. Without the code, even the operator can't read the plaintext — the proof of "we can't lock you in."
